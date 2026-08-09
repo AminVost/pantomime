@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: pantomin
+      MYSQL_USER: pantomin_user
+      MYSQL_PASSWORD: pantomin_password
+      MYSQL_ROOT_PASSWORD: root_password_change_me
+    ports:
+      - "3306:3306"
+    volumes:
+      - pantomin_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-proot_password_change_me"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pantomin_mysql:

@@ -1,0 +1,276 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum GameStatus {
+  SETUP
+  ACTIVE
+  FINISHED
+  ABANDONED
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum AnswerResult {
+  CORRECT
+  SKIPPED
+}
+
+enum TurnStatus {
+  ACTIVE
+  COMPLETED
+}
+
+enum PlayMode {
+  SINGLE
+  CONTINUOUS
+}
+
+enum PenaltyType {
+  CHANGE
+  FAULT
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String?  @db.VarChar(120)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  games     Game[]
+}
+
+model Category {
+  id        Int          @id @default(autoincrement())
+  name      String       @db.VarChar(120)
+  slug      String       @unique @db.VarChar(140)
+  icon      String?      @db.VarChar(32)
+  status    RecordStatus @default(ACTIVE)
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  words     Word[]
+  games     GameCategory[]
+  choices   GameChoice[]
+
+  @@index([status, sortOrder])
+}
+
+model Word {
+  id         Int          @id @default(autoincrement())
+  title      String       @db.VarChar(255)
+  categoryId Int
+  points     Int
+  difficulty Difficulty
+  status     RecordStatus @default(ACTIVE)
+  usageCount Int          @default(0)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  category   Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  usedIn     GameUsedWord[]
+  answers    GameAnswer[]
+
+  @@index([categoryId, status])
+  @@index([points, status])
+  @@index([difficulty, status])
+  @@index([categoryId, points, status])
+  @@index([status, usageCount])
+}
+
+model Game {
+  id               String      @id @default(cuid())
+  userId           Int?
+  status           GameStatus  @default(SETUP)
+  roundCount       Int
+  roundDuration    Int
+  currentRound     Int         @default(1)
+  currentTeamId    String?     @db.VarChar(30)
+  skipPenalty      Int         @default(0)
+  playMode         PlayMode    @default(SINGLE)
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  user             User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  teams            Team[]
+  categories       GameCategory[]
+  rounds           GameRound[]
+  turns            GameTurn[]
+  usedWords        GameUsedWord[]
+  answers          GameAnswer[]
+  choices          GameChoice[]
+  penalties        GamePenalty[]
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Team {
+  id        String   @id @default(cuid()) @db.VarChar(30)
+  gameId    String
+  name      String   @db.VarChar(80)
+  colorKey  String   @db.VarChar(30)
+  score     Int      @default(0)
+  position  Int
+  forfeited Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  rounds    GameRound[]
+  turns     GameTurn[]
+  answers   GameAnswer[]
+  choices   GameChoice[]
+  penalties GamePenalty[]
+
+  @@unique([gameId, position])
+  @@index([gameId, score])
+}
+
+model GameCategory {
+  gameId     String
+  categoryId Int
+  game       Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, categoryId])
+  @@index([categoryId])
+}
+
+model GameRound {
+  id           String    @id @default(cuid()) @db.VarChar(30)
+  gameId       String
+  teamId       String    @db.VarChar(30)
+  roundNumber  Int
+  score        Int       @default(0)
+  correctCount Int       @default(0)
+  skippedCount Int       @default(0)
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  game         Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  team         Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  turns        GameTurn[]
+  answers      GameAnswer[]
+  penalties    GamePenalty[]
+
+  @@unique([gameId, teamId, roundNumber])
+  @@index([gameId, roundNumber])
+}
+
+model GameTurn {
+  id          String     @id @default(cuid()) @db.VarChar(30)
+  gameId      String
+  roundId     String     @db.VarChar(30)
+  teamId      String     @db.VarChar(30)
+  roundNumber Int
+  status      TurnStatus @default(ACTIVE)
+  startedAt   DateTime   @default(now())
+  finishedAt  DateTime?
+  faultCount   Int        @default(0)
+  specialThirty Boolean   @default(false)
+  game        Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  round       GameRound  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  team        Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  answers     GameAnswer[]
+  penalties   GamePenalty[]
+
+  @@unique([gameId, teamId, roundNumber])
+  @@index([gameId, status])
+  @@index([teamId, roundNumber])
+}
+
+
+model GameChoice {
+  id          String   @id @default(cuid()) @db.VarChar(30)
+  gameId      String
+  teamId      String   @db.VarChar(30)
+  categoryId  Int?
+  roundNumber Int
+  points      Int
+  changeUsed  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  game        Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, teamId, categoryId, points])
+  @@unique([gameId, teamId, roundNumber])
+  @@index([gameId, roundNumber])
+  @@index([categoryId, points])
+}
+
+model GameUsedWord {
+  gameId     String
+  wordId     Int
+  reservedAt DateTime @default(now())
+  shownAt    DateTime?
+  game       Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  word       Word     @relation(fields: [wordId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, wordId])
+  @@index([gameId, reservedAt])
+}
+
+model GameAnswer {
+  id            String       @id @default(cuid()) @db.VarChar(30)
+  clientEventId String       @unique @db.VarChar(64)
+  gameId        String
+  roundId       String       @db.VarChar(30)
+  turnId        String       @db.VarChar(30)
+  teamId        String       @db.VarChar(30)
+  wordId        Int
+  result        AnswerResult
+  points        Int
+  createdAt     DateTime     @default(now())
+  game          Game         @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  round         GameRound    @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  turn          GameTurn     @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  team          Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  word          Word         @relation(fields: [wordId], references: [id], onDelete: Restrict)
+
+  @@unique([gameId, wordId])
+  @@index([gameId, createdAt])
+  @@index([teamId, createdAt])
+  @@index([wordId, result])
+}
+
+model GamePenalty {
+  id            String      @id @default(cuid()) @db.VarChar(30)
+  clientEventId String      @unique @db.VarChar(64)
+  gameId        String
+  roundId       String      @db.VarChar(30)
+  turnId        String?     @db.VarChar(30)
+  teamId        String      @db.VarChar(30)
+  type          PenaltyType
+  points        Int         @default(-1)
+  wordId        Int?
+  createdAt     DateTime    @default(now())
+  game          Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  round         GameRound   @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  turn          GameTurn?   @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, createdAt])
+  @@index([teamId, createdAt])
+  @@index([roundId, type])
+}
+
+model Setting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique @db.VarChar(120)
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

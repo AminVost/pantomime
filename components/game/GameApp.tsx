@@ -1,0 +1,1159 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AppShell } from "@/components/ui/AppShell";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Mascot } from "@/components/game/Mascot";
+import { TimerRing } from "@/components/game/TimerRing";
+import { apiGet, apiPost, enqueueAndFlush, flushOutbox } from "@/lib/game/client-sync";
+import { loadCatalogPack, pickCatalogWords, refreshOnlinePack } from "@/lib/game/catalog-client";
+import type { CatalogPackDTO, CategoryDTO, GameChoiceDTO, GameDTO, RoundSummary, RuntimeMode, TeamDTO, WordDTO } from "@/types/game";
+
+type Screen =
+  | "HOME"
+  | "SETUP"
+  | "READY"
+  | "CATEGORY"
+  | "REVEAL"
+  | "PLAYING"
+  | "ROUND_RESULT"
+  | "SCOREBOARD"
+  | "WINNER";
+
+type ThemePreference = "light" | "dark" | "system";
+type ModalKind = "rules" | "settings" | "score" | null;
+type PlayFeedback = "success" | "failure" | null;
+
+type GameConfig = {
+  teamNames: string[];
+  roundCount: number;
+  roundDuration: number;
+  categoryIds: number[];
+};
+
+type PersistedSnapshot = {
+  version: 1;
+  screen: Screen;
+  game: GameDTO;
+  config: GameConfig;
+  selectedCategoryId?: number | null;
+  activeCategoryIds?: number[];
+  usedChoices?: GameChoiceDTO[];
+  selectedPoints: 2 | 4 | 6 | 30 | null;
+  queue: WordDTO[];
+  currentWord: WordDTO | null;
+  turnId: string | null;
+  timerEndAt: number | null;
+  roundStats: RoundSummary;
+  lastRoundSummary: RoundSummary | null;
+  lastTeamName: string | null;
+  changeUsed?: boolean;
+  gameRuntimeMode?: RuntimeMode;
+  usedWordIds?: number[];
+};
+
+const SNAPSHOT_KEY = "pantomin-active-game-v1";
+const SOUND_KEY = "pantomin-sound-v1";
+const THEME_KEY = "pantomin-theme";
+const CATEGORY_PREF_KEY = "pantomin-category-preferences-v1";
+const RANDOM_CATEGORY_KEY = "pantomin-random-category-v1";
+const CONTINUOUS_MODE_KEY = "pantomin-continuous-mode-v1";
+const RUNTIME_MODE_KEY = "pantomin-runtime-mode-v1";
+const TEAM_COLORS = ["violet", "cyan", "orange", "green", "rose", "blue", "amber", "mint"];
+const COLOR_VALUES: Record<string, string> = {
+  violet: "#8268f3",
+  cyan: "#36aeca",
+  orange: "#e98b43",
+  green: "#4eae77",
+  rose: "#dd6f8e",
+  blue: "#568ae5",
+  amber: "#d4a13c",
+  mint: "#50ae9b"
+};
+
+const initialConfig: GameConfig = {
+  teamNames: ["تیم آبی", "تیم نارنجی"],
+  roundCount: 3,
+  roundDuration: 60,
+  categoryIds: []
+};
+
+const emptyStats: RoundSummary = { score: 0, correctCount: 0, skippedCount: 0 };
+
+function sortScoreboard(teams: TeamDTO[]) {
+  return [...teams].sort((a, b) => Number(a.forfeited) - Number(b.forfeited) || b.score - a.score || a.position - b.position);
+}
+
+function currentTeam(game: GameDTO | null) {
+  return game?.teams.find((team) => team.id === game.currentTeamId) ?? null;
+}
+
+function preferredCategoryIds(available: CategoryDTO[]) {
+  const allIds = available.map((item) => item.id);
+  if (typeof window === "undefined") return allIds;
+  try {
+    const stored = JSON.parse(localStorage.getItem(CATEGORY_PREF_KEY) || "[]") as number[];
+    const allowed = new Set(allIds);
+    const valid = stored.filter((id) => Number.isInteger(id) && allowed.has(id));
+    return valid.length ? valid : allIds;
+  } catch {
+    return allIds;
+  }
+}
+
+function advanceGameLocally(game: GameDTO): GameDTO {
+  const ordered = [...game.teams].sort((a, b) => a.position - b.position);
+  const active = ordered.filter((team) => !team.forfeited);
+  if (active.length <= 1) return { ...game, status: "FINISHED", currentTeamId: null };
+  const current = ordered.find((team) => team.id === game.currentTeamId);
+  if (!current) return game;
+  const later = active.find((team) => team.position > current.position);
+  if (later) return { ...game, currentTeamId: later.id };
+  const nextRound = game.currentRound + 1;
+  if (nextRound > game.roundCount) return { ...game, status: "FINISHED", currentTeamId: null };
+  return { ...game, currentRound: nextRound, currentTeamId: active[0].id };
+}
+
+function localSpeedBonus(basePoints: number, elapsedMs: number, roundDurationSeconds: number) {
+  if (![2, 4, 6].includes(basePoints)) return 0;
+  const bonusWindowMs = Math.max(1000, (roundDurationSeconds * 1000) / 3);
+  if (elapsedMs >= bonusWindowMs) return 0;
+  const ratio = Math.max(0, Math.min(1, (bonusWindowMs - elapsedMs) / bonusWindowMs));
+  return Math.max(1, Math.min(3, Math.ceil(ratio * 3)));
+}
+
+function icon(name: "back" | "settings" | "sound" | "moon" | "score") {
+  const paths = {
+    back: <path d="M15 18l-6-6 6-6" />,
+    settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-3v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15.4a1.7 1.7 0 0 0-1.56-1.03H5v-3h.08A1.7 1.7 0 0 0 6.64 10a1.7 1.7 0 0 0-.34-1.88l-.06-.06L8.36 5.94l.06.06A1.7 1.7 0 0 0 10.3 6.34a1.7 1.7 0 0 0 1.03-1.56V4h3v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06A1.7 1.7 0 0 0 19 9.3a1.7 1.7 0 0 0 1.56 1.03H21v3h-.08A1.7 1.7 0 0 0 19.4 15z" /></>,
+    sound: <><path d="M11 5L6 9H3v6h3l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /></>,
+    moon: <path d="M20 15.4A8 8 0 0 1 8.6 4 8 8 0 1 0 20 15.4z" />,
+    score: <><path d="M5 20V10" /><path d="M12 20V4" /><path d="M19 20v-7" /></>
+  };
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
+export function GameApp() {
+  const [screen, setScreen] = useState<Screen>("HOME");
+  const [setupStep, setSetupStep] = useState(0);
+  const [config, setConfig] = useState<GameConfig>(initialConfig);
+  const [categories, setCategories] = useState<CategoryDTO[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [game, setGame] = useState<GameDTO | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [activeCategoryIds, setActiveCategoryIds] = useState<number[]>([]);
+  const [selectedPoints, setSelectedPoints] = useState<2 | 4 | 6 | 30 | null>(null);
+  const [queue, setQueue] = useState<WordDTO[]>([]);
+  const [currentWord, setCurrentWord] = useState<WordDTO | null>(null);
+  const [turnId, setTurnId] = useState<string | null>(null);
+  const [roundStats, setRoundStats] = useState<RoundSummary>(emptyStats);
+  const [lastRoundSummary, setLastRoundSummary] = useState<RoundSummary | null>(null);
+  const [lastTeamName, setLastTeamName] = useState<string | null>(null);
+  const [timerEndAt, setTimerEndAt] = useState<number | null>(null);
+  const [remaining, setRemaining] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [theme, setTheme] = useState<ThemePreference>("system");
+  const [hasResume, setHasResume] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  const [randomCategoryEnabled, setRandomCategoryEnabled] = useState(false);
+  const [usedChoices, setUsedChoices] = useState<GameChoiceDTO[]>([]);
+  const [choicesLoading, setChoicesLoading] = useState(false);
+  const [continuousModeEnabled, setContinuousModeEnabled] = useState(false);
+  const [changeUsed, setChangeUsed] = useState(false);
+  const [playFeedback, setPlayFeedback] = useState<PlayFeedback>(null);
+  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("online");
+  const [gameRuntimeMode, setGameRuntimeMode] = useState<RuntimeMode>("online");
+  const [catalogPack, setCatalogPack] = useState<CatalogPackDTO | null>(null);
+  const [catalogMode, setCatalogMode] = useState<RuntimeMode | null>(null);
+  const [usedWordIds, setUsedWordIds] = useState<number[]>([]);
+  const [online, setOnline] = useState(true);
+
+  const roundEndingRef = useRef(false);
+  const actionLockRef = useRef(false);
+  const flowLockRef = useRef(false);
+  const prefetchingRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const roundDragStartRef = useRef<number | null>(null);
+  const lastTickRef = useRef<number | null>(null);
+  const roundStatsRef = useRef<RoundSummary>(emptyStats);
+  const gameRef = useRef<GameDTO | null>(null);
+  const resolutionTimerRef = useRef<number | null>(null);
+
+  const team = currentTeam(game);
+  const leaderboard = useMemo(() => sortScoreboard(game?.teams ?? []), [game?.teams]);
+
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast((current) => current === message ? null : current), 2600);
+  }, []);
+
+  const playTone = useCallback((kind: "start" | "correct" | "end" | "win" | "tick") => {
+    if (!soundEnabled || typeof window === "undefined") return;
+    try {
+      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = audioContextRef.current ?? new AudioCtx();
+      audioContextRef.current = ctx;
+      void ctx.resume();
+      const now = ctx.currentTime;
+
+      const note = (frequency: number, at: number, duration: number, volume = 0.075, type: OscillatorType = "sine") => {
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(frequency, at);
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(volume, at + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+        oscillator.connect(gain).connect(ctx.destination);
+        oscillator.start(at);
+        oscillator.stop(at + duration + 0.015);
+      };
+
+      if (kind === "tick") {
+        note(1080, now, 0.035, 0.035, "triangle");
+        note(760, now + 0.055, 0.028, 0.024, "triangle");
+        return;
+      }
+      if (kind === "end") {
+        note(520, now, 0.11, 0.065);
+        note(660, now + 0.09, 0.12, 0.06);
+        note(440, now + 0.2, 0.16, 0.055);
+        return;
+      }
+      if (kind === "correct") {
+        note(690, now, 0.07, 0.08);
+        note(840, now + 0.065, 0.1, 0.07);
+        return;
+      }
+      if (kind === "win") {
+        note(660, now, 0.12, 0.07);
+        note(820, now + 0.09, 0.14, 0.075);
+        note(990, now + 0.19, 0.18, 0.07);
+        return;
+      }
+      note(420, now, 0.08, 0.065);
+    } catch { /* optional enhancement */ }
+  }, [soundEnabled]);
+
+  const vibrate = useCallback((pattern: number | number[]) => {
+    if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate(pattern);
+  }, []);
+
+  const loadCategories = useCallback(async (mode: RuntimeMode = game ? gameRuntimeMode : runtimeMode) => {
+    setCategoriesLoading(true);
+    try {
+      const pack = await loadCatalogPack(mode);
+      const data = pack.categories;
+      const available = new Set(data.map((item) => item.id));
+      setCatalogPack(pack);
+      setCatalogMode(mode);
+      setCategories(data);
+      if (mode === "online") {
+        void refreshOnlinePack().then((fresh) => {
+          setCatalogPack(fresh);
+          setCatalogMode("online");
+          setCategories(fresh.categories);
+        }).catch(() => undefined);
+      }
+      setConfig((current) => {
+        const currentValid = current.categoryIds.filter((id) => available.has(id));
+        return { ...current, categoryIds: currentValid.length ? currentValid : preferredCategoryIds(data) };
+      });
+      return data;
+    } catch (error) {
+      showToast(mode === "online" ? "اتصال به دیتابیس آماده نیست؛ حالت Local رو انتخاب کن." : error instanceof Error ? error.message : "دسته‌بندی‌ها بارگذاری نشدن.");
+      return [] as CategoryDTO[];
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, [game, gameRuntimeMode, runtimeMode, showToast]);
+
+  const openSettings = useCallback(() => {
+    setModal("settings");
+    void loadCategories();
+  }, [loadCategories]);
+
+  useEffect(() => {
+    setHasResume(Boolean(localStorage.getItem(SNAPSHOT_KEY)));
+    setSoundEnabled(localStorage.getItem(SOUND_KEY) !== "off");
+    const storedTheme = localStorage.getItem(THEME_KEY) as ThemePreference | null;
+    setTheme(storedTheme === "light" || storedTheme === "dark" || storedTheme === "system" ? storedTheme : "system");
+    setRandomCategoryEnabled(localStorage.getItem(RANDOM_CATEGORY_KEY) === "on");
+    setContinuousModeEnabled(localStorage.getItem(CONTINUOUS_MODE_KEY) === "on");
+    const storedRuntime = localStorage.getItem(RUNTIME_MODE_KEY);
+    setRuntimeMode(storedRuntime === "local" ? "local" : "online");
+    setOnline(navigator.onLine);
+    setPreferencesReady(true);
+    void flushOutbox();
+  }, []);
+
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+
+  useEffect(() => {
+    if (!game?.id || gameRuntimeMode === "local") return;
+    const syncAndRefresh = async () => {
+      const remaining = await flushOutbox();
+      if (remaining > 0) return;
+      try {
+        const fresh = await apiGet<GameDTO>(`/api/games/${game.id}`);
+        setGame(fresh);
+      } catch { /* keep resilient local state */ }
+    };
+    window.addEventListener("online", syncAndRefresh);
+    return () => window.removeEventListener("online", syncAndRefresh);
+  }, [game?.id, gameRuntimeMode]);
+
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem(RUNTIME_MODE_KEY, runtimeMode);
+    if (!game) {
+      setCategories([]);
+      setCatalogPack(null);
+      setCatalogMode(null);
+      void loadCategories(runtimeMode);
+    }
+  }, [runtimeMode, preferencesReady, game, loadCategories]);
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem(SOUND_KEY, soundEnabled ? "on" : "off");
+  }, [soundEnabled, preferencesReady]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem(RANDOM_CATEGORY_KEY, randomCategoryEnabled ? "on" : "off");
+  }, [randomCategoryEnabled, preferencesReady]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem(CONTINUOUS_MODE_KEY, continuousModeEnabled ? "on" : "off");
+  }, [continuousModeEnabled, preferencesReady]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem(THEME_KEY, theme);
+    document.documentElement.dataset.themePreference = theme;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const dark = theme === "dark" || (theme === "system" && media.matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme, preferencesReady]);
+
+  useEffect(() => {
+    if (!preferencesReady || !categories.length || !config.categoryIds.length) return;
+    localStorage.setItem(CATEGORY_PREF_KEY, JSON.stringify(config.categoryIds));
+  }, [config.categoryIds, categories.length, preferencesReady]);
+
+  useEffect(() => {
+    if (!game || screen === "HOME") return;
+    const snapshot: PersistedSnapshot = {
+      version: 1,
+      screen,
+      game,
+      config,
+      selectedCategoryId,
+      activeCategoryIds,
+      usedChoices,
+      selectedPoints,
+      queue,
+      currentWord,
+      turnId,
+      timerEndAt,
+      roundStats,
+      lastRoundSummary,
+      lastTeamName,
+      changeUsed,
+      gameRuntimeMode,
+      usedWordIds
+    };
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+    setHasResume(true);
+  }, [screen, game, config, selectedCategoryId, activeCategoryIds, usedChoices, selectedPoints, queue, currentWord, turnId, timerEndAt, roundStats, lastRoundSummary, lastTeamName, changeUsed, gameRuntimeMode, usedWordIds]);
+
+  useEffect(() => { roundStatsRef.current = roundStats; }, [roundStats]);
+  useEffect(() => { gameRef.current = game; }, [game]);
+
+  const releaseUnusedWords = useCallback((words: WordDTO[]) => {
+    if (!game?.id || !words.length) return Promise.resolve();
+    const wordIds = [...new Set(words.map((word) => word.id))];
+    setUsedWordIds((current) => current.filter((id) => !wordIds.includes(id)));
+    if (gameRuntimeMode === "online") enqueueAndFlush(`/api/games/${game.id}/words/release`, { wordIds });
+    return Promise.resolve();
+  }, [game?.id, gameRuntimeMode]);
+
+  const syncFinish = useCallback((gameId: string, completedTurnId: string) => {
+    if (gameRuntimeMode === "online") enqueueAndFlush(`/api/games/${gameId}/turns/${completedTurnId}/finish`, {});
+  }, [gameRuntimeMode]);
+
+  const finishRound = useCallback((reason: "timeout" | "correct" = "timeout") => {
+    const activeGame = gameRef.current;
+    if (roundEndingRef.current || !activeGame || !turnId) return;
+    roundEndingRef.current = true;
+    const completedTurnId = turnId;
+    const summary = { ...roundStatsRef.current };
+    const specialFailure = reason === "timeout" && selectedPoints === 30 && summary.correctCount === 0;
+    const gameForAdvance = specialFailure && activeGame.currentTeamId
+      ? {
+          ...activeGame,
+          teams: activeGame.teams.map((item) => item.id === activeGame.currentTeamId ? { ...item, forfeited: true } : item)
+        }
+      : activeGame;
+    const nextGame = advanceGameLocally(gameForAdvance);
+    void releaseUnusedWords(queue);
+
+    setRemaining(0);
+    setQueue([]);
+    setTimerEndAt(null);
+    setLastRoundSummary({ ...summary, specialThirty: selectedPoints === 30, forfeited: specialFailure });
+    setLastTeamName(currentTeam(activeGame)?.name ?? null);
+    setTurnId(null);
+    setGame(nextGame);
+    setPlayFeedback(null);
+    setScreen("ROUND_RESULT");
+    if (reason === "timeout") vibrate([70, 45, 90]);
+    void syncFinish(activeGame.id, completedTurnId);
+  }, [turnId, selectedPoints, queue, releaseUnusedWords, vibrate, syncFinish]);
+
+  const beginTimeoutResolution = useCallback(() => {
+    if (roundEndingRef.current || playFeedback || !turnId) return;
+    setTimerEndAt(null);
+    setRemaining(0);
+    setPlayFeedback("failure");
+    playTone("end");
+    vibrate([55, 35, 70]);
+    resolutionTimerRef.current = window.setTimeout(() => finishRound("timeout"), 620);
+  }, [playFeedback, turnId, playTone, vibrate, finishRound]);
+
+  useEffect(() => {
+    if (screen !== "PLAYING" || !timerEndAt || !game || playFeedback) return;
+    const tick = () => {
+      const value = Math.max(0, Math.ceil((timerEndAt - Date.now()) / 1000));
+      setRemaining(value);
+      if (value > 0 && value <= 10 && lastTickRef.current !== value) {
+        lastTickRef.current = value;
+        playTone("tick");
+      }
+      if (value <= 0) beginTimeoutResolution();
+    };
+    tick();
+    const timer = window.setInterval(tick, 120);
+    return () => window.clearInterval(timer);
+  }, [screen, timerEndAt, game, playFeedback, playTone, beginTimeoutResolution]);
+
+  useEffect(() => {
+    if (screen === "WINNER") playTone("win");
+  }, [screen, playTone]);
+
+  const resetForNewGame = useCallback(() => {
+    localStorage.removeItem(SNAPSHOT_KEY);
+    setHasResume(false);
+    setGame(null);
+    setScreen("SETUP");
+    setSetupStep(0);
+    setConfig({ ...initialConfig, categoryIds: preferredCategoryIds(categories) });
+    setActiveCategoryIds([]);
+    setSelectedCategoryId(null);
+    setSelectedPoints(null);
+    setQueue([]);
+    setCurrentWord(null);
+    setTurnId(null);
+    setRoundStats(emptyStats);
+    setLastRoundSummary(null);
+    setLastTeamName(null);
+    setChangeUsed(false);
+    setPlayFeedback(null);
+    setUsedWordIds([]);
+    setGameRuntimeMode(runtimeMode);
+    setTimerEndAt(null);
+    setRemaining(0);
+    roundEndingRef.current = false;
+    if (resolutionTimerRef.current) window.clearTimeout(resolutionTimerRef.current);
+    resolutionTimerRef.current = null;
+    void loadCategories(runtimeMode);
+  }, [loadCategories, categories, runtimeMode]);
+
+  const resumeGame = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(SNAPSHOT_KEY);
+      if (!raw) return;
+      const snapshot = JSON.parse(raw) as PersistedSnapshot;
+      if (snapshot.version !== 1 || !snapshot.game) throw new Error();
+      const restoredScreen = (snapshot.screen as string) === "DIFFICULTY" ? "CATEGORY" : snapshot.screen;
+      setScreen(restoredScreen as Screen);
+      setGame(snapshot.game);
+      setConfig(snapshot.config);
+      setActiveCategoryIds(snapshot.activeCategoryIds?.length ? snapshot.activeCategoryIds : snapshot.config.categoryIds);
+      setSelectedCategoryId(snapshot.selectedCategoryId ?? null);
+      setUsedChoices(snapshot.usedChoices ?? []);
+      setSelectedPoints(snapshot.selectedPoints);
+      setQueue(snapshot.queue || []);
+      setCurrentWord(snapshot.currentWord);
+      setTurnId(snapshot.turnId);
+      setTimerEndAt(snapshot.timerEndAt);
+      setRoundStats(snapshot.roundStats || emptyStats);
+      setLastRoundSummary(snapshot.lastRoundSummary);
+      setLastTeamName(snapshot.lastTeamName ?? null);
+      setChangeUsed(snapshot.changeUsed ?? false);
+      const restoredMode = snapshot.gameRuntimeMode ?? "online";
+      setGameRuntimeMode(restoredMode);
+      setUsedWordIds(snapshot.usedWordIds ?? []);
+      setPlayFeedback(null);
+      roundStatsRef.current = snapshot.roundStats || emptyStats;
+      roundEndingRef.current = false;
+      void loadCategories(snapshot.gameRuntimeMode ?? "online");
+      if ((snapshot.gameRuntimeMode ?? "online") === "online") void flushOutbox().then((remaining) => {
+        if (remaining > 0) return null;
+        return apiGet<GameDTO>(`/api/games/${snapshot.game.id}`);
+      }).then((fresh) => { if (fresh) setGame(fresh); }).catch(() => undefined);
+      if ((snapshot.gameRuntimeMode ?? "online") === "online") void apiGet<{ choices: GameChoiceDTO[] }>(`/api/games/${snapshot.game.id}/choices`).then((data) => setUsedChoices(data.choices)).catch(() => undefined);
+    } catch {
+      localStorage.removeItem(SNAPSHOT_KEY);
+      setHasResume(false);
+      showToast("بازی قبلی قابل بازیابی نبود.");
+    }
+  }, [loadCategories, showToast]);
+
+  const updateTeamCount = (delta: number) => {
+    setConfig((current) => {
+      const nextCount = Math.max(2, Math.min(8, current.teamNames.length + delta));
+      const names = [...current.teamNames];
+      while (names.length < nextCount) names.push(`تیم ${names.length + 1}`);
+      return { ...current, teamNames: names.slice(0, nextCount) };
+    });
+  };
+
+  const adjustRoundCount = (delta: number) => {
+    setConfig((current) => ({ ...current, roundCount: Math.max(1, Math.min(20, current.roundCount + delta)) }));
+    vibrate(12);
+  };
+
+  const finishRoundDrag = (clientY: number) => {
+    const start = roundDragStartRef.current;
+    roundDragStartRef.current = null;
+    if (start === null) return;
+    const delta = clientY - start;
+    if (Math.abs(delta) < 18) return;
+    adjustRoundCount(delta < 0 ? 1 : -1);
+  };
+
+  const createGame = async () => {
+    if (!config.categoryIds.length) return showToast("حداقل یک دسته رو انتخاب کن.");
+    if (config.teamNames.some((name) => !name.trim())) return showToast("اسم همه تیم‌ها رو وارد کن.");
+    const availableCombinations = categories
+      .filter((category) => config.categoryIds.includes(category.id))
+      .reduce((sum, category) => sum + ([2, 4, 6] as const).filter((points) => category.counts[`points${points}` as keyof typeof category.counts] > 0).length, 0);
+    if (categories.length && availableCombinations < config.roundCount) return showToast(`برای هر تیم ${config.roundCount} انتخاب متفاوت لازم داری.`);
+    if (flowLockRef.current) return;
+    flowLockRef.current = true;
+    setBusy(true);
+    try {
+      await loadCategories(runtimeMode);
+      const created = runtimeMode === "local"
+        ? (() => {
+            const teams = config.teamNames.map((name, index) => ({ id: `local-team-${crypto.randomUUID()}`, name: name.trim(), colorKey: TEAM_COLORS[index], score: 0, position: index, forfeited: false }));
+            return { id: `local-game-${crypto.randomUUID()}`, roundCount: config.roundCount, roundDuration: config.roundDuration, currentRound: 1, currentTeamId: teams[0].id, playMode: continuousModeEnabled ? "CONTINUOUS" as const : "SINGLE" as const, status: "ACTIVE" as const, teams };
+          })()
+        : await apiPost<GameDTO>("/api/games", {
+            roundCount: config.roundCount,
+            roundDuration: config.roundDuration,
+            categoryIds: config.categoryIds,
+            playMode: continuousModeEnabled ? "CONTINUOUS" : "SINGLE",
+            teams: config.teamNames.map((name, index) => ({ name: name.trim(), colorKey: TEAM_COLORS[index] }))
+          });
+      setGameRuntimeMode(runtimeMode);
+      setGame(created);
+      setUsedWordIds([]);
+      setActiveCategoryIds([...config.categoryIds]);
+      setUsedChoices([]);
+      setSelectedCategoryId(null);
+      setSelectedPoints(null);
+      setQueue([]);
+      setCurrentWord(null);
+      setTurnId(null);
+      setRoundStats(emptyStats);
+      setLastRoundSummary(null);
+      setLastTeamName(null);
+      setChangeUsed(false);
+      setPlayFeedback(null);
+      roundStatsRef.current = emptyStats;
+      setTimerEndAt(null);
+      setScreen("READY");
+      roundEndingRef.current = false;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "شروع بازی انجام نشد.");
+    } finally {
+      flowLockRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const loadChoices = useCallback(async () => {
+    if (!game) return [] as GameChoiceDTO[];
+    if (gameRuntimeMode === "local") return usedChoices;
+    setChoicesLoading(true);
+    try {
+      const data = await apiGet<{ choices: GameChoiceDTO[] }>(`/api/games/${game.id}/choices`);
+      setUsedChoices(data.choices);
+      return data.choices;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "انتخاب‌های بازی آماده نشدن.");
+      return [] as GameChoiceDTO[];
+    } finally {
+      setChoicesLoading(false);
+    }
+  }, [game, gameRuntimeMode, usedChoices, showToast]);
+
+  const choiceKey = useCallback((categoryId: number, points: 2 | 4 | 6) => `${categoryId}:${points}`, []);
+
+  const openCategorySelection = useCallback(async () => {
+    if (!game) return;
+    const choices = usedChoices;
+    setSelectedCategoryId(null);
+    setSelectedPoints(null);
+    setChangeUsed(false);
+    setPlayFeedback(null);
+
+    const catalog = categories.length ? categories : await loadCategories();
+    if (!catalog.length) return;
+
+    if (randomCategoryEnabled) {
+      const used = new Set(choices
+        .filter((item): item is GameChoiceDTO & { categoryId: number; points: 2 | 4 | 6 } => item.teamId === game.currentTeamId && item.categoryId !== null && item.points !== 30)
+        .map((item) => choiceKey(item.categoryId, item.points)));
+      const availableCategories = catalog.filter((category) => {
+        if (!activeCategoryIds.includes(category.id)) return false;
+        return ([2, 4, 6] as const).some((points) => category.counts[`points${points}` as keyof typeof category.counts] > 0 && !used.has(choiceKey(category.id, points)));
+      });
+      if (!availableCategories.length) {
+        showToast("ترکیب موضوع و امتیاز دیگه‌ای باقی نمونده.");
+        return;
+      }
+      const picked = availableCategories[Math.floor(Math.random() * availableCategories.length)];
+      setSelectedCategoryId(picked.id);
+    }
+    setScreen("CATEGORY");
+  }, [game, usedChoices, randomCategoryEnabled, categories, activeCategoryIds, choiceKey, showToast, loadCategories]);
+
+  const fetchQueue = useCallback(async (categoryId: number | null, points: 2 | 4 | 6 | 30, count = 1) => {
+    if (!game || !team) return [] as WordDTO[];
+    const pack = catalogPack && catalogMode === gameRuntimeMode ? catalogPack : await loadCatalogPack(gameRuntimeMode);
+    if (!catalogPack || catalogMode !== gameRuntimeMode) {
+      setCatalogPack(pack);
+      setCatalogMode(gameRuntimeMode);
+      setCategories(pack.categories);
+    }
+    const selected = pickCatalogWords(pack, activeCategoryIds, categoryId, points, usedWordIds, count);
+    if (!selected.length) return [] as WordDTO[];
+    const words: WordDTO[] = selected.map((word) => ({ id: word.id, title: word.title, points: word.points, categoryName: word.categoryName }));
+    const choice: GameChoiceDTO = { categoryId, points, teamId: team.id, roundNumber: game.currentRound };
+    setUsedWordIds((current) => [...new Set([...current, ...selected.map((word) => word.id)])]);
+    setUsedChoices((current) => current.some((item) => item.teamId === team.id && item.roundNumber === game.currentRound)
+      ? current
+      : [...current, choice]);
+    if (gameRuntimeMode === "online") {
+      enqueueAndFlush(`/api/games/${game.id}/choices`, {
+        teamId: team.id,
+        roundNumber: game.currentRound,
+        categoryId,
+        points,
+        wordIds: selected.map((word) => word.id)
+      });
+    }
+    return words;
+  }, [game, team, catalogPack, catalogMode, gameRuntimeMode, activeCategoryIds, usedWordIds]);
+
+  const chooseCategoryPoints = async (categoryId: number | null, points: 2 | 4 | 6 | 30) => {
+    if (flowLockRef.current || !game) return;
+    flowLockRef.current = true;
+    setBusy(true);
+    try {
+      const count = game.playMode === "CONTINUOUS" && points !== 30 ? 8 : 1;
+      const words = await fetchQueue(categoryId, points, count);
+      if (!words.length) {
+        showToast("برای این انتخاب کلمه‌ای باقی نمونده.");
+        return;
+      }
+      setSelectedCategoryId(categoryId);
+      setSelectedPoints(points);
+      setCurrentWord(words[0]);
+      setQueue(words.slice(1));
+      setChangeUsed(false);
+      setPlayFeedback(null);
+      const freshStats: RoundSummary = { ...emptyStats, specialThirty: points === 30, faultCount: 0, speedBonus: 0, basePoints: points };
+      roundStatsRef.current = freshStats;
+      setRoundStats(freshStats);
+      setScreen("REVEAL");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "کلمه آماده نشد.");
+      void loadChoices();
+    } finally {
+      flowLockRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const changeWord = async () => {
+    if (!game || !team || !currentWord || !selectedPoints || changeUsed || flowLockRef.current) return;
+    flowLockRef.current = true;
+    setBusy(true);
+    try {
+      const pack = catalogPack && catalogMode === gameRuntimeMode ? catalogPack : await loadCatalogPack(gameRuntimeMode);
+      const replacement = pickCatalogWords(pack, activeCategoryIds, selectedCategoryId, selectedPoints, [...usedWordIds, currentWord.id], 1)[0];
+      if (!replacement) return showToast("کلمه جایگزین دیگه‌ای باقی نمونده.");
+      const nextWord: WordDTO = { id: replacement.id, title: replacement.title, points: replacement.points, categoryName: replacement.categoryName };
+      setCurrentWord(nextWord);
+      setUsedWordIds((current) => [...new Set([...current, replacement.id])]);
+      setChangeUsed(true);
+      const nextStats = { ...roundStatsRef.current, score: roundStatsRef.current.score - 1, changePenalty: 1 };
+      roundStatsRef.current = nextStats;
+      setRoundStats(nextStats);
+      setGame((current) => current ? { ...current, teams: current.teams.map((item) => item.id === team.id ? { ...item, score: item.score - 1 } : item) } : current);
+      if (gameRuntimeMode === "online") {
+        enqueueAndFlush(`/api/games/${game.id}/words/change`, {
+          clientEventId: crypto.randomUUID(), teamId: team.id, wordId: currentWord.id, replacementWordId: replacement.id
+        });
+      }
+      vibrate(20);
+      showToast("کلمه عوض شد؛ ۱ امتیاز کم شد.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "تعویض کلمه انجام نشد.");
+    } finally {
+      flowLockRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const startTimer = () => {
+    if (!game || !team || !currentWord || flowLockRef.current) return;
+    const startedAtMs = Date.now();
+    const clientTurnId = `t-${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    setTurnId(clientTurnId);
+    if (gameRuntimeMode === "online") {
+      enqueueAndFlush(`/api/games/${game.id}/turns/start`, { teamId: team.id, turnId: clientTurnId, startedAtMs });
+    }
+    const endAt = startedAtMs + game.roundDuration * 1000;
+    setTimerEndAt(endAt);
+    setRemaining(game.roundDuration);
+    lastTickRef.current = null;
+    if (resolutionTimerRef.current) window.clearTimeout(resolutionTimerRef.current);
+    resolutionTimerRef.current = null;
+    roundEndingRef.current = false;
+    actionLockRef.current = false;
+    setPlayFeedback(null);
+    playTone("start");
+    vibrate(35);
+    setScreen("PLAYING");
+  };
+
+  const refillQueue = useCallback(async () => {
+    if (!selectedCategoryId || !selectedPoints || selectedPoints === 30 || !game || game.playMode !== "CONTINUOUS" || prefetchingRef.current) return;
+    prefetchingRef.current = true;
+    try {
+      const words = await fetchQueue(selectedCategoryId, selectedPoints, 8);
+      setQueue((current) => [...current, ...words]);
+    } catch { /* current round can continue with existing queue */ }
+    finally { prefetchingRef.current = false; }
+  }, [selectedCategoryId, selectedPoints, game, fetchQueue]);
+
+  useEffect(() => {
+    if (screen === "PLAYING" && game?.playMode === "CONTINUOUS" && selectedPoints !== 30 && queue.length <= 4) void refillQueue();
+  }, [screen, game?.playMode, selectedPoints, queue.length, refillQueue]);
+
+  const registerFault = () => {
+    if (actionLockRef.current || roundEndingRef.current || playFeedback || !game || !team || !turnId) return;
+    actionLockRef.current = true;
+    window.setTimeout(() => { actionLockRef.current = false; }, 140);
+    const nextStats: RoundSummary = { ...roundStatsRef.current, score: roundStatsRef.current.score - 1, faultCount: (roundStatsRef.current.faultCount ?? 0) + 1 };
+    roundStatsRef.current = nextStats;
+    setRoundStats(nextStats);
+    setGame((current) => current ? { ...current, teams: current.teams.map((item) => item.id === team.id ? { ...item, score: item.score - 1 } : item) } : current);
+    vibrate(18);
+    if (gameRuntimeMode === "online") {
+      enqueueAndFlush(`/api/games/${game.id}/turns/${turnId}/fault`, { clientEventId: crypto.randomUUID(), turnId, teamId: team.id, occurredAtMs: Date.now() });
+    }
+  };
+
+  const registerAnswer = (result: "CORRECT" | "SKIPPED") => {
+    if (actionLockRef.current || roundEndingRef.current || playFeedback || !game || !team || !turnId || !currentWord || !selectedPoints) return;
+    const singleTurn = game.playMode === "SINGLE" || selectedPoints === 30;
+    if (singleTurn && result === "SKIPPED") return;
+    actionLockRef.current = true;
+    window.setTimeout(() => { if (!singleTurn) actionLockRef.current = false; }, 170);
+
+    const answeredWord = currentWord;
+    const answeredAtMs = Date.now();
+    const basePoints = result === "CORRECT" ? selectedPoints : 0;
+    const elapsedMs = timerEndAt ? Math.max(0, game.roundDuration * 1000 - Math.max(0, timerEndAt - answeredAtMs)) : game.roundDuration * 1000;
+    const bonus = result === "CORRECT" && singleTurn && selectedPoints !== 30 ? localSpeedBonus(basePoints, elapsedMs, game.roundDuration) : 0;
+    const optimisticPoints = result === "CORRECT" ? basePoints + bonus : 0;
+
+    if (result === "CORRECT") {
+      playTone("correct");
+      vibrate(25);
+      setPlayFeedback("success");
+      if (singleTurn) setTimerEndAt(null);
+      else window.setTimeout(() => setPlayFeedback((current) => current === "success" ? null : current), 260);
+    }
+
+    const nextStats: RoundSummary = {
+      ...roundStatsRef.current,
+      score: roundStatsRef.current.score + optimisticPoints,
+      correctCount: roundStatsRef.current.correctCount + (result === "CORRECT" ? 1 : 0),
+      skippedCount: roundStatsRef.current.skippedCount + (result === "SKIPPED" ? 1 : 0),
+      speedBonus: result === "CORRECT" ? bonus : roundStatsRef.current.speedBonus,
+      basePoints: selectedPoints
+    };
+    roundStatsRef.current = nextStats;
+    setRoundStats(nextStats);
+    if (optimisticPoints) setGame((current) => current ? { ...current, teams: current.teams.map((item) => item.id === team.id ? { ...item, score: item.score + optimisticPoints } : item) } : current);
+
+    if (gameRuntimeMode === "online") {
+      enqueueAndFlush(`/api/games/${game.id}/answers`, {
+        clientEventId: crypto.randomUUID(), turnId, teamId: team.id, wordId: answeredWord.id, result, answeredAtMs
+      });
+    }
+
+    if (singleTurn && result === "CORRECT") {
+      resolutionTimerRef.current = window.setTimeout(() => finishRound("correct"), 620);
+      return;
+    }
+    if (queue.length) {
+      setCurrentWord(queue[0]);
+      setQueue((items) => items.slice(1));
+      return;
+    }
+    setCurrentWord(null);
+    void refillQueue().then(() => {
+      setQueue((items) => {
+        if (items.length) { setCurrentWord(items[0]); return items.slice(1); }
+        showToast("کلمه‌های این سطح تموم شد؛ این نوبت رو می‌بندیم.");
+        window.setTimeout(() => finishRound("timeout"), 350);
+        return items;
+      });
+    });
+  };
+
+  const continueAfterResult = () => setScreen("SCOREBOARD");
+
+  const continueAfterScoreboard = () => {
+    if (!game) return;
+    if (game.status === "FINISHED" || !game.currentTeamId) setScreen("WINNER");
+    else {
+      setSelectedCategoryId(null);
+      setSelectedPoints(null);
+      setQueue([]);
+      setCurrentWord(null);
+      setRoundStats(emptyStats);
+      setLastRoundSummary(null);
+      setLastTeamName(null);
+      setChangeUsed(false);
+      setPlayFeedback(null);
+      roundStatsRef.current = emptyStats;
+      roundEndingRef.current = false;
+      setScreen("READY");
+    }
+  };
+
+  const scorePeekButton = game && screen !== "SCOREBOARD" && screen !== "WINNER" ? (
+    <button className="icon-btn score-peek-icon" onClick={() => setModal("score")} aria-label="دیدن امتیازها">{icon("score")}</button>
+  ) : null;
+
+  const header = (title?: string, back?: () => void) => (
+    <div className="topbar">
+      <div className="brand-mini"><span className="brand-mark">پ</span><span>{title || "پانتومین"}</span></div>
+      <div className="topbar-actions">
+        {scorePeekButton}
+        {back
+          ? <button className="icon-btn" onClick={back} aria-label="برگشت">{icon("back")}</button>
+          : <button className="icon-btn" onClick={openSettings} aria-label="تنظیمات">{icon("settings")}</button>}
+      </div>
+    </div>
+  );
+
+  const renderSetup = () => {
+    const stepTitles = [
+      ["تیم‌ها", "اسم‌ها رو همون‌جوری بنویس که صداشون می‌کنید."],
+      ["چند دور؟", "با غلتک انتخابش کن؛ هر دور یعنی یک نوبت برای همه تیم‌ها."],
+      ["چقدر وقت؟", "زمانی رو بگیر که بازی ریتمش رو از دست نده."],
+      ["آماده‌ایم", "یه نگاه آخر؛ دسته‌های بازی از تنظیمات قابل تغییرن."]
+    ] as const;
+
+    return <div className="screen" key="SETUP">
+      {header("تنظیم بازی", setupStep === 0 ? () => setScreen("HOME") : () => setSetupStep((step) => Math.max(0, step - 1)))}
+      <div className="progress-dots">{stepTitles.map((_, index) => <i key={index} className={`progress-dot ${index === setupStep ? "active" : ""}`} />)}</div>
+      <div className="setup-head"><div className="eyebrow">مرحله {setupStep + 1} از {stepTitles.length}</div><h1 className="title-lg">{stepTitles[setupStep][0]}</h1><p className="copy hint-copy">{stepTitles[setupStep][1]}</p></div>
+      <div className="setup-body">
+        <div className="setup-panel" key={setupStep}>
+          {setupStep === 0 && <>
+            <div className="team-count">
+              <button className="count-btn" onClick={() => updateTeamCount(1)} disabled={config.teamNames.length >= 8} aria-label="اضافه کردن تیم">+</button>
+              <div className="count-display"><strong className="number">{config.teamNames.length}</strong><span>تیم</span></div>
+              <button className="count-btn" onClick={() => updateTeamCount(-1)} disabled={config.teamNames.length <= 2} aria-label="کم کردن تیم">−</button>
+            </div>
+            <div className="team-inputs">{config.teamNames.map((name, index) => <label className="team-input" key={index}>
+              <i className="team-color" style={{ background: COLOR_VALUES[TEAM_COLORS[index]] }} />
+              <input value={name} maxLength={50} aria-label={`نام تیم ${index + 1}`} onChange={(event) => setConfig((current) => ({ ...current, teamNames: current.teamNames.map((item, itemIndex) => itemIndex === index ? event.target.value : item) }))} />
+            </label>)}</div>
+          </>}
+
+          {setupStep === 1 && <>
+            <div className="round-wheel-shell">
+              <button className="round-wheel-control" onClick={() => adjustRoundCount(-1)} disabled={config.roundCount <= 1} aria-label="کم کردن تعداد دور">−</button>
+              <div
+                className="round-wheel"
+                role="spinbutton"
+                tabIndex={0}
+                aria-label="تعداد دور"
+                aria-valuemin={1}
+                aria-valuemax={20}
+                aria-valuenow={config.roundCount}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp" || event.key === "ArrowRight") adjustRoundCount(1);
+                  if (event.key === "ArrowDown" || event.key === "ArrowLeft") adjustRoundCount(-1);
+                }}
+                onPointerDown={(event) => { roundDragStartRef.current = event.clientY; }}
+                onPointerUp={(event) => finishRoundDrag(event.clientY)}
+                onPointerCancel={() => { roundDragStartRef.current = null; }}
+              >
+                <span className="round-wheel-fade round-wheel-prev number">{Math.max(1, config.roundCount - 1)}</span>
+                <div className="round-wheel-current" key={config.roundCount}><strong className="number">{config.roundCount}</strong><small>دور</small></div>
+                <span className="round-wheel-fade round-wheel-next number">{Math.min(20, config.roundCount + 1)}</span>
+              </div>
+              <button className="round-wheel-control" onClick={() => adjustRoundCount(1)} disabled={config.roundCount >= 20} aria-label="اضافه کردن تعداد دور">+</button>
+            </div>
+            <div className="round-preset-row">{[3,5,7,10].map((value) => <button key={value} className={config.roundCount === value ? "selected" : ""} onClick={() => setConfig((current) => ({ ...current, roundCount: value }))}><span className="number">{value}</span> دور</button>)}</div>
+            <p className="gesture-hint">روی غلتک بالا/پایین بکش</p>
+          </>}
+
+          {setupStep === 2 && <>
+            <div className="preset-grid time-presets">{[30,45,60,90,120].map((value) => <button key={value} className={`preset-card ${config.roundDuration === value ? "selected" : ""}`} onClick={() => setConfig((current) => ({ ...current, roundDuration: value }))}><strong className="number">{value}</strong><small>ثانیه</small></button>)}</div>
+            <label className="custom-number"><span>زمان دلخواه</span><input className="number" type="number" inputMode="numeric" min={15} max={300} value={config.roundDuration} onChange={(event) => setConfig((current) => ({ ...current, roundDuration: Math.max(15, Math.min(300, Number(event.target.value) || 15)) }))} /></label>
+          </>}
+
+          {setupStep === 3 && <div className="overview-list">
+            <div className="overview-row"><span>تیم‌ها</span><strong>{config.teamNames.join("، ")}</strong></div>
+            <div className="overview-row"><span>تعداد دور</span><strong>{config.roundCount} دور</strong></div>
+            <div className="overview-row"><span>زمان هر نوبت</span><strong>{config.roundDuration} ثانیه</strong></div>
+            <button className="overview-row overview-action" onClick={openSettings}><span>دسته‌های بازی</span><strong>{categoriesLoading ? "در حال بارگذاری…" : `${config.categoryIds.length} دسته · تغییر`}</strong></button>
+            <div className="overview-row"><span>انتخاب موضوع</span><strong>{randomCategoryEnabled ? "تصادفی" : "دستی"}</strong></div>
+            <div className="overview-row"><span>حالت اجرا</span><strong>{runtimeMode === "local" ? "Local · بدون اینترنت" : "Online · همگام"}</strong></div>
+            <div className="overview-row"><span>حالت بازی</span><strong>{continuousModeEnabled ? "چندکلمه‌ای" : "یک کلمه‌ای"}</strong></div>
+            <div className="overview-row"><span>امتیازها</span><strong>۲ / ۴ / ۶ + ریسک ۳۰</strong></div>
+          </div>}
+        </div>
+      </div>
+      <div className="setup-footer">
+        {setupStep < stepTitles.length - 1
+          ? <Button onClick={() => setSetupStep((step) => Math.min(stepTitles.length - 1, step + 1))} disabled={setupStep === 0 && config.teamNames.some((name) => !name.trim())}>ادامه</Button>
+          : <Button onClick={createGame} disabled={busy || categoriesLoading || !config.categoryIds.length}>{busy ? "داریم آماده می‌کنیم…" : categoriesLoading ? "دسته‌ها دارن آماده می‌شن…" : "شروع بازی"}</Button>}
+        <Button tone="ghost" wide={false} onClick={setupStep === 0 ? () => setScreen("HOME") : () => setSetupStep((step) => step - 1)}>برگشت</Button>
+      </div>
+    </div>;
+  };
+
+  const renderHome = () => <div className="screen" key="HOME">
+    <div className="topbar"><div /><button className="icon-btn" onClick={openSettings} aria-label="تنظیمات">{icon("settings")}</button></div>
+    <div className="hero">
+      <Mascot mood="ready" size="lg" />
+      <div className="logo-lockup"><div className="logo-title">پانتومین</div><p className="logo-sub">کمتر حرف بزن، بیشتر بازی کن.</p></div>
+      <div className="home-actions">
+        <Button onClick={resetForNewGame}>شروع بازی</Button>
+        <Button tone="secondary" onClick={resumeGame} disabled={!hasResume}>ادامه بازی</Button>
+        <div className="home-secondary"><Button tone="ghost" onClick={() => setModal("rules")}>قوانین بازی</Button><Button tone="ghost" onClick={openSettings}>تنظیمات</Button></div>
+      </div>
+    </div>
+  </div>;
+
+  const renderReady = () => team && game ? <div className="screen" key="READY">
+    {header(`دور ${game.currentRound} از ${game.roundCount}`)}
+    <div className="turn-center ready-center">
+      <div className="turn-team-pill"><i style={{ background: COLOR_VALUES[team.colorKey] }} /> نوبت این تیمه</div>
+      <Mascot mood="ready" size="lg" />
+      <h1 className="ready-title"><span>گوشی رو بده به</span><strong>{team.name}</strong></h1>
+      <p className="copy turn-copy hint-copy">فقط بازیگر صفحه بعد رو ببینه؛ آماده شدی، بزن بریم.</p>
+    </div>
+    <div className="turn-footer"><Button onClick={() => void openCategorySelection()} disabled={choicesLoading}>{choicesLoading ? "موضوع‌ها رو می‌چینیم…" : "آماده‌ام"}</Button></div>
+  </div> : null;
+
+  const renderCategory = () => {
+    if (!team) return null;
+    const used = new Set(usedChoices
+      .filter((item): item is GameChoiceDTO & { categoryId: number; points: 2 | 4 | 6 } => item.teamId === team.id && item.categoryId !== null && item.points !== 30)
+      .map((item) => choiceKey(item.categoryId, item.points)));
+    const thirtyUsedByTeam = usedChoices.some((item) => item.teamId === team.id && item.points === 30);
+    const playableCategories = categories.filter((category) => activeCategoryIds.includes(category.id));
+    const shownCategories = randomCategoryEnabled && selectedCategoryId
+      ? playableCategories.filter((category) => category.id === selectedCategoryId)
+      : playableCategories;
+
+    const pointButton = (category: CategoryDTO, points: 2 | 4 | 6) => {
+      const count = category.counts[`points${points}` as keyof typeof category.counts];
+      const alreadyUsed = used.has(choiceKey(category.id, points));
+      const disabled = busy || alreadyUsed || count <= 0;
+      return <button
+        key={points}
+        className={`category-point ${alreadyUsed ? "used" : ""}`}
+        disabled={disabled}
+        onClick={() => void chooseCategoryPoints(category.id, points)}
+        aria-label={`${category.name} ${points} امتیازی${alreadyUsed ? "، استفاده شده" : ""}`}
+      >
+        <b className="number">{points}</b><small>{alreadyUsed ? "رفته" : "امتیاز"}</small>
+      </button>;
+    };
+
+    return <div className="screen" key="CATEGORY">
+      {header("موضوع", () => setScreen("READY"))}
+      <div className="category-choice-head">
+        <div><div className="eyebrow">{team.name}</div><h1 className="title-lg">موضوع + امتیاز</h1></div>
+        <p className="copy hint-copy">هر تیم هر ترکیب موضوع + امتیاز رو فقط یک‌بار می‌تونه انتخاب کنه.</p>
+      </div>
+
+      <button
+        className={`thirty-risk-card ${thirtyUsedByTeam ? "used" : ""}`}
+        disabled={busy || thirtyUsedByTeam}
+        onClick={() => void chooseCategoryPoints(null, 30)}
+      >
+        <span className="thirty-risk-copy"><small>ریسک ویژه</small><strong>۳۰ امتیاز</strong><em>{thirtyUsedByTeam ? "استفاده شده" : "اگه نگیری، این تیم می‌بازه"}</em></span>
+        <span className="thirty-risk-mark number">30</span>
+      </button>
+
+      {choicesLoading ? <div className="loading-lines category-choice-loading">{Array.from({length:5}).map((_,i)=><i key={i}/>)}</div> :
+        <div className={`category-choice-list ${randomCategoryEnabled ? "random-mode" : ""}`}>
+          {shownCategories.map((category) => <div className="category-choice-card" key={category.id}>
+            <div className="category-choice-name"><span className="category-icon">{category.icon || "•"}</span><strong>{category.name}</strong></div>
+            <div className="category-points">{([2,4,6] as const).map((points) => pointButton(category, points))}</div>
+          </div>)}
+          {!shownCategories.length && <div className="empty-choice"><strong>موضوعی باقی نمونده</strong><span>ریسک ۳۰ هنوز می‌تونه گزینه آخر باشه.</span></div>}
+        </div>}
+      {randomCategoryEnabled && shownCategories.length > 0 && <p className="random-choice-note">موضوع عادی این نوبت تصادفی انتخاب شده؛ امتیازش با خودته.</p>}
+    </div>;
+  };
+
+  const renderReveal = () => currentWord && team ? <div className="screen" key="REVEAL">
+    {header("کلمه")}
+    <div className="turn-center reveal-center">
+      <div className={`card word-reveal-card ${selectedPoints === 30 ? "special-word-card" : ""}`}>
+        <div className="word-label">{selectedPoints === 30 ? "ریسک ۳۰" : "کلمه تو"}</div>
+        <div className="word-title">{currentWord.title}</div>
+        <div className="word-meta"><span>{currentWord.categoryName}</span><span>•</span><b>{selectedPoints} امتیاز</b></div>
+      </div>
+      <Mascot mood="look-up" />
+      <p className="copy hint-copy">زمان فقط وقتی خودت بزنی شروع می‌شه.</p>
+      <button className={`change-word-btn ${changeUsed ? "used" : ""}`} onClick={() => void changeWord()} disabled={busy || changeUsed}>
+        <span>{changeUsed ? "تعویض استفاده شد" : "تعویض کلمه"}</span><b>{changeUsed ? "✓" : "−۱ امتیاز"}</b>
+      </button>
+    </div>
+    <div className="turn-footer"><Button onClick={startTimer} disabled={busy}>{busy ? "یک لحظه…" : "شروع زمان"}</Button></div>
+  </div> : null;
+
+  const renderPlaying = () => game && team ? <div className={`screen playing-screen ${playFeedback ? `play-feedback-${playFeedback}` : ""}`} key="PLAYING">
+    <div className="play-feedback-layer" aria-hidden="true" />
+    <div className="playing-head"><div className="round-pill">دور <b className="number">{game.currentRound}/{game.roundCount}</b></div><button className="score-pill score-pill-button" onClick={() => setModal("score")} aria-label="دیدن امتیازهای فعلی"><i className="score-dot" style={{ background: COLOR_VALUES[team.colorKey] }} />{team.name} <b className="number">{team.score}</b>{icon("score")}</button></div>
+    <div className="playing-main">
+      <TimerRing remaining={remaining} total={game.roundDuration} />
+      {currentWord ? <><div className="word-title">{currentWord.title}</div><div className="playing-category">{currentWord.categoryName} · {selectedPoints} امتیاز{game.playMode === "SINGLE" && selectedPoints !== 30 ? " + سرعت" : ""}</div><Mascot mood={remaining <= 10 ? "tense" : "look-up"} size="sm" /></> : <><Mascot mood="thinking" /><p className="copy hint-copy">کلمه بعدی داره آماده می‌شه…</p></>}
+      {playFeedback === "success" && <div className="play-feedback-copy success">گرفتین!</div>}
+      {playFeedback === "failure" && <div className="play-feedback-copy failure">وقت تموم شد</div>}
+    </div>
+    <div className="fault-row"><button className="fault-btn" disabled={Boolean(playFeedback) || roundEndingRef.current} onClick={registerFault}>خطا <b>−۱</b></button><small>{roundStats.faultCount ? `${roundStats.faultCount} خطا` : "هر بار خطا: ۱−"}</small></div>
+    <div className="play-actions">
+      {game.playMode === "CONTINUOUS" && selectedPoints !== 30 && <button className="btn answer-skip" disabled={!currentWord || Boolean(playFeedback) || roundEndingRef.current} onClick={() => registerAnswer("SKIPPED")}>رد کردن</button>}
+      <button className="btn answer-correct" disabled={!currentWord || Boolean(playFeedback) || roundEndingRef.current} onClick={() => registerAnswer("CORRECT")}>درست گفتن</button>
+    </div>
+  </div> : null;
+
+  const renderRoundResult = () => lastRoundSummary && game ? <div className="screen" key="ROUND_RESULT">
+    {header("نتیجه نوبت")}
+    <div className="turn-center">
+      <Mascot mood={lastRoundSummary.forfeited ? "sad" : lastRoundSummary.correctCount > 0 ? "celebrate" : "sad"} />
+      <div className="eyebrow">{lastTeamName || "این تیم"}</div>
+      <h1 className="title-lg">{lastRoundSummary.forfeited ? "ریسک ۳۰ نگرفت!" : lastRoundSummary.correctCount > 0 ? "گرفتینش!" : "این یکی نشد"}</h1>
+      {lastRoundSummary.forfeited ? <div className="forfeit-badge">این تیم از بازی خارج شد</div> : <div className="result-score">{lastRoundSummary.score >= 0 ? "+" : ""}{lastRoundSummary.score}</div>}
+      <div className="result-stats">
+        {lastRoundSummary.correctCount > 0 && lastRoundSummary.basePoints ? <div className="result-stat"><strong className="number">{lastRoundSummary.basePoints}</strong><span>پایه</span></div> : null}
+        {lastRoundSummary.correctCount > 0 && lastRoundSummary.speedBonus ? <div className="result-stat"><strong className="number">+{lastRoundSummary.speedBonus}</strong><span>سرعت</span></div> : null}
+        {(lastRoundSummary.changePenalty ?? 0) > 0 ? <div className="result-stat"><strong className="number">−1</strong><span>تعویض</span></div> : null}
+        {(lastRoundSummary.faultCount ?? 0) > 0 ? <div className="result-stat"><strong className="number">−{lastRoundSummary.faultCount}</strong><span>خطا</span></div> : null}
+      </div>
+    </div>
+    <div className="turn-footer"><Button onClick={continueAfterResult}>دیدن امتیازها</Button></div>
+  </div> : null;
+
+  const renderScoreboard = () => game ? <div className="screen" key="SCOREBOARD">
+    {header("جدول امتیازها")}
+    <div className="setup-head"><div className="eyebrow">وضعیت بازی</div><h1 className="title-lg">فعلاً کی جلوئه؟</h1><p className="copy hint-copy">رتبه‌ها بعد از هر نوبت به‌روز می‌شن.</p></div>
+    <div className="scoreboard">{leaderboard.map((item, index) => <div className={`score-row ${index === 0 && !item.forfeited ? "leader" : ""} ${item.forfeited ? "forfeited" : ""}`} key={item.id}><span className="rank">{index + 1}</span><div className="score-team"><strong><i className="score-dot" style={{ background: COLOR_VALUES[item.colorKey] }} />{item.name}</strong><small>{item.forfeited ? "از بازی خارج شده" : index === 0 ? "فعلاً صدرنشین" : `تیم شماره ${item.position + 1}`}</small></div><span className="score-value">{item.score}</span></div>)}</div>
+    <div className="turn-footer"><Button onClick={continueAfterScoreboard}>{game.status === "FINISHED" ? "اعلام برنده" : game.currentTeamId ? `نوبت ${currentTeam(game)?.name ?? "تیم بعد"}` : "ادامه"}</Button></div>
+  </div> : null;
+
+  const renderWinner = () => {
+    const winner = leaderboard.find((item) => !item.forfeited) ?? leaderboard[0];
+    if (!winner) return null;
+    return <div className="screen" key="WINNER">
+      <div className="confetti" aria-hidden="true">{Array.from({ length: 18 }).map((_, index) => <i key={index} style={{ left: `${5 + (index * 89) % 92}%`, animationDelay: `${(index % 6) * .08}s`, "--x": `${(index % 2 ? 1 : -1) * (20 + index * 3)}px` } as CSSProperties} />)}</div>
+      <div className="turn-center"><Mascot mood="celebrate" size="lg" /><div className="winner-trophy">🏆</div><div className="eyebrow">برنده بازی</div><h1 className="title-xl">{winner.name}</h1><p className="copy">با <strong className="number">{winner.score}</strong> امتیاز بازی رو برد!</p><div className="scoreboard" style={{ width: "100%" }}>{leaderboard.filter((item) => !item.forfeited).slice(0,3).map((item,index)=><div className={`score-row ${index===0?"leader":""}`} key={item.id}><span className="rank">{index+1}</span><div className="score-team"><strong>{item.name}</strong></div><span className="score-value">{item.score}</span></div>)}</div></div>
+      <div className="home-actions"><Button onClick={() => { localStorage.removeItem(SNAPSHOT_KEY); void createGame(); }} disabled={busy}>{busy ? "داریم می‌چینیم…" : "دوباره با همین تیم‌ها"}</Button><Button tone="secondary" onClick={resetForNewGame}>بازی جدید</Button><Button tone="ghost" onClick={() => { localStorage.removeItem(SNAPSHOT_KEY); setHasResume(false); setScreen("HOME"); }}>برگشت به خانه</Button></div>
+    </div>;
+  };
+
+  return <AppShell>
+    {screen === "HOME" && renderHome()}
+    {screen === "SETUP" && renderSetup()}
+    {screen === "READY" && renderReady()}
+    {screen === "CATEGORY" && renderCategory()}
+    {screen === "REVEAL" && renderReveal()}
+    {screen === "PLAYING" && renderPlaying()}
+    {screen === "ROUND_RESULT" && renderRoundResult()}
+    {screen === "SCOREBOARD" && renderScoreboard()}
+    {screen === "WINNER" && renderWinner()}
+
+    {modal === "rules" && <Modal title="قانون بازی خیلی ساده‌ست" onClose={() => setModal(null)}><div className="rules-list"><div className="rule"><b>۱</b><span>حالت عادی هر نوبت فقط یک کلمه داره.</span></div><div className="rule"><b>۲</b><span>موضوع و امتیاز رو قبل هر نوبت انتخاب می‌کنید؛ جواب سریع‌تر تا ۳ امتیاز جایزه داره.</span></div><div className="rule"><b>۳</b><span>هر نوبت یک تعویض با جریمه ۱ امتیاز دارید و هر خطا هم ۱ امتیاز کم می‌کنه.</span></div><div className="rule"><b>۴</b><span>ریسک ۳۰ برای هر تیم فقط یک‌باره؛ اگه نگیره، از بازی خارج می‌شه.</span></div></div></Modal>}
+
+    {modal === "settings" && <Modal title="تنظیمات" onClose={() => setModal(null)}>
+      <div className="settings-section-label">حالت اجرا</div>
+      <div className="runtime-mode-options">
+        <button className={`runtime-mode-card ${runtimeMode === "online" ? "selected" : ""}`} onClick={() => setRuntimeMode("online")}>
+          <span><strong>Online</strong><small>دیتابیس + Sync پس‌زمینه</small></span><i className={`connection-dot ${online ? "online" : "offline"}`} />
+        </button>
+        <button className={`runtime-mode-card ${runtimeMode === "local" ? "selected" : ""}`} onClick={() => setRuntimeMode("local")}>
+          <span><strong>Local</strong><small>کاملاً روی همین گوشی · بدون اینترنت</small></span><b>⚡</b>
+        </button>
+      </div>
+      <p className="runtime-mode-note">{game ? "تغییر حالت برای بازی بعدی اعمال می‌شه." : runtimeMode === "local" ? "هیچ رویداد بازی به سرور ارسال نمی‌شه." : "روند بازی محلی و فوریه؛ Sync دیتابیس پشت‌صحنه انجام می‌شه."}</p>
+      <div className="settings-section-label">ظاهر</div>
+      <div className="theme-options">{(["light","dark","system"] as ThemePreference[]).map((value) => <button key={value} className={`theme-option ${theme === value ? "selected" : ""}`} onClick={() => setTheme(value)}>{value === "light" ? "روشن" : value === "dark" ? "تیره" : "سیستم"}</button>)}</div>
+      <div className="setting-row"><span>{icon("sound")} صداهای بازی</span><button className={`switch ${soundEnabled ? "on" : ""}`} onClick={() => setSoundEnabled((enabled) => !enabled)} aria-label="تغییر وضعیت صدا"><i /></button></div>
+      <div className="setting-row"><span>{icon("moon")} حرکت‌های پس‌زمینه</span><small className="muted setting-note">با Reduce Motion گوشی هماهنگه</small></div>
+      <div className="setting-row"><span className="setting-copy"><strong>موضوع تصادفی هر نوبت</strong><small>به‌جای انتخاب موضوع، بازی خودش یکی رو نشون می‌ده.</small></span><button className={`switch ${randomCategoryEnabled ? "on" : ""}`} onClick={() => setRandomCategoryEnabled((enabled) => !enabled)} aria-label="موضوع تصادفی"><i /></button></div>
+      <div className="setting-row"><span className="setting-copy"><strong>حالت چندکلمه‌ای</strong><small>{game ? "برای بازی بعدی؛ " : ""}اختیاری؛ مثل نسخه قبلی تا پایان زمان چند کلمه پشت‌سرهم میاد.</small></span><button className={`switch ${continuousModeEnabled ? "on" : ""}`} onClick={() => setContinuousModeEnabled((enabled) => !enabled)} aria-label="حالت چندکلمه‌ای"><i /></button></div>
+      <div className="settings-category-head"><div><div className="settings-section-label">دسته‌های بازی</div><small>{game ? "برای بازی بعدی" : "برای بازی جدید"}</small></div><button className="text-btn" onClick={() => setConfig((current) => ({ ...current, categoryIds: categories.map((item) => item.id) }))} disabled={!categories.length || config.categoryIds.length === categories.length}>{config.categoryIds.length === categories.length && categories.length ? "همه انتخابن" : "انتخاب همه"}</button></div>
+      {categoriesLoading ? <div className="loading-lines compact-loading">{Array.from({length:4}).map((_,i)=><i key={i}/>)}</div> : <div className="category-grid settings-category-grid">{categories.map((category) => {
+        const selected = config.categoryIds.includes(category.id);
+        return <button key={category.id} className={`category-chip ${selected ? "selected" : ""}`} onClick={() => {
+          if (selected && config.categoryIds.length === 1) return showToast("حداقل یه دسته باید روشن بمونه.");
+          setConfig((current) => ({ ...current, categoryIds: selected ? current.categoryIds.filter((id) => id !== category.id) : [...current.categoryIds, category.id] }));
+        }}><span className="category-icon">{category.icon || "•"}</span><strong>{category.name}</strong></button>;
+      })}</div>}
+      {!categoriesLoading && !config.categoryIds.length && <p className="settings-warning">حداقل یک دسته برای بازی جدید انتخاب کن.</p>}
+    </Modal>}
+
+    {modal === "score" && game && <Modal title="امتیازها الان" onClose={() => setModal(null)}><div className="scoreboard score-peek-board">{leaderboard.map((item, index) => <div className={`score-row ${index === 0 && !item.forfeited ? "leader" : ""} ${item.forfeited ? "forfeited" : ""}`} key={item.id}><span className="rank">{index + 1}</span><div className="score-team"><strong><i className="score-dot" style={{ background: COLOR_VALUES[item.colorKey] }} />{item.name}</strong><small>{item.forfeited ? "از بازی خارج شده" : item.id === game.currentTeamId ? "نوبت فعلی" : index === 0 ? "فعلاً جلوئه" : ""}</small></div><span className="score-value">{item.score}</span></div>)}</div></Modal>}
+
+    {toast && <div className="toast" role="status">{toast}</div>}
+  </AppShell>;
+}
