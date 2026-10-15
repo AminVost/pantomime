@@ -21,7 +21,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
+      - name: Android SDK from hosted runner
+        run: |
+          test -d "$ANDROID_HOME"
+          echo "Android SDK: $ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms"
       - name: Install mobile dependencies
         working-directory: mobile
         run: npm install --no-audit --no-fund
