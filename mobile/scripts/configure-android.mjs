@@ -12,6 +12,10 @@ let xml = readFileSync(manifestPath, "utf8");
 xml = xml.replace('android:allowBackup="true"', 'android:allowBackup="false"');
 xml = xml.replace(/android:icon="@[^"]+"/, 'android:icon="@drawable/pantomime_icon"');
 xml = xml.replace(/android:roundIcon="@[^"]+"/, 'android:roundIcon="@drawable/pantomime_icon"');
+// WebView navigator.vibrate requires the Android VIBRATE permission.
+if (!xml.includes("android.permission.VIBRATE")) {
+  xml = xml.replace("</manifest>", '    <uses-permission android:name="android.permission.VIBRATE" />\n</manifest>');
+}
 xml = xml.replace(/<activity\b[\s\S]*?>/, tag => {
   let value = tag;
   if (!value.includes("android:screenOrientation=")) value = value.replace("<activity", '<activity android:screenOrientation="portrait"');
