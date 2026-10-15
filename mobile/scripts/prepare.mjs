@@ -1,9 +1,18 @@
-import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 
 const mobile = resolve(import.meta.dirname, "..");
 const web = resolve(mobile, "..");
 const generated = join(mobile, "generated");
+// The Actions ZIP includes a fully materialized project and can build outside the web monorepo.
+if (!existsSync(join(web, "components/game/GameApp.tsx"))) {
+  if (existsSync(join(generated, "components/game/GameApp.tsx")) && existsSync(join(mobile, "public/data/catalog.json"))) {
+    console.log("Standalone Android source detected: using bundled React UI and offline catalog");
+    process.exit(0);
+  }
+  throw new Error("Cannot find original web project or generated standalone files");
+}
+
 const write = (path, data) => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, data, "utf8");
