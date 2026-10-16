@@ -5,7 +5,8 @@ const home = resolve(import.meta.dirname, "..");
 const app = resolve(home, "android/app");
 const manifestPath = resolve(app, "src/main/AndroidManifest.xml");
 const gradlePath = resolve(app, "build.gradle");
-if (!existsSync(manifestPath) || !existsSync(gradlePath)) {
+const rootGradlePath = resolve(home, "android/build.gradle");
+if (!existsSync(manifestPath) || !existsSync(gradlePath) || !existsSync(rootGradlePath)) {
   throw new Error("Generate Android source first: npm run android:init");
 }
 let xml = readFileSync(manifestPath, "utf8");
@@ -52,23 +53,27 @@ if (!gradle.includes(marker)) {
   writeFileSync(gradlePath, gradle, "utf8");
 }
 
-// Opt-in regional Maven mirror for networks where dl.google.com is unavailable.
-// No dependency version is changed. GitHub CI keeps using the official repositories.
+// Maven mirrors MUST be configured in the ROOT android/build.gradle.
+// The Android Gradle Plugin and Google Services are root buildscript classpath
+// dependencies; adding a repository to app/build.gradle has no effect on them.
+// This opt-in patch is idempotent and leaves version numbers untouched.
 if (process.env.PANTOMIME_MAVEN_MIRROR === "aliyun") {
   const mirror = "maven { url 'https://maven.aliyun.com/repository/google' }";
-  let settings = readFileSync(gradlePath, "utf8");
-  if (!settings.includes(mirror)) {
-    let matched = 0;
-    settings = settings.replace(/(repositories\s*\{\s*)(google\(\))/g, (_all, prefix, googleRepository) => {
-      matched += 1;
-      return prefix + mirror + "\n        " + googleRepository;
+  let rootGradle = readFileSync(rootGradlePath, "utf8");
+  const original = rootGradle;
+
+  if (!rootGradle.includes(mirror)) {
+    let count = 0;
+    rootGradle = rootGradle.replace(/(repositories\s*\{\s*)(google\(\))/g, (_, prefix, google) => {
+      count++;
+      return prefix + mirror + "\n        " + google;
     });
-    if (matched !== 2) {
-      throw new Error("Could not find both Gradle repository blocks; check android/build.gradle");
+    if (count < 2) {
+      throw new Error("Expected buildscript and allprojects repositories in android/build.gradle; aborting mirror change.");
     }
-    writeFileSync(gradlePath, settings, "utf8");
+    writeFileSync(rootGradlePath, rootGradle, "utf8");
   }
-  console.log("Aliyun Android Maven mirror enabled for local Gradle resolution.");
+  console.log("Aliyun enabled in android/build.gradle (root): " + (rootGradle !== original ? "updated" : "already configured"));
 }
 
 console.log("Native manifest, portrait mode, launcher icon, and optional signing ready.");

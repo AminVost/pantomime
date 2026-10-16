@@ -43,3 +43,10 @@ test("RTL and native app id", () => {
   assert.ok(load("index.html").includes('dir="rtl"'));
   assert.ok(load("capacitor.config.ts").includes("ir.aminvost.pantomime"));
 });
+
+test("Aliyun mirror code targets Android root buildscript, not app module", () => {
+  const script = load("scripts/configure-android.mjs");
+  assert.ok(script.includes('rootGradlePath = resolve(home, "android/build.gradle")'));
+  assert.ok(script.includes('readFileSync(rootGradlePath, "utf8")'));
+  assert.ok(script.includes("PANTOMIME_MAVEN_MIRROR"));
+});

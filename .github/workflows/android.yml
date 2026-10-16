@@ -40,6 +40,14 @@ jobs:
         run: |
           npx cap add android
           npm run android:configure
+      - name: Verify mirror configuration on root Gradle project
+        working-directory: mobile
+        run: |
+          cp android/build.gradle android/build.gradle.original
+          PANTOMIME_MAVEN_MIRROR=aliyun node scripts/configure-android.mjs
+          grep -q 'https://maven.aliyun.com/repository/google' android/build.gradle
+          cp android/build.gradle.original android/build.gradle
+          rm android/build.gradle.original
       - name: Restore optional release keystore
         working-directory: mobile
         env:
