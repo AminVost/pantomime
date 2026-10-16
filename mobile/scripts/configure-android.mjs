@@ -52,7 +52,7 @@ for (const key of ["app_name", "title_activity_main"]) {
 }
 writeFileSync(stringsPath, strings, "utf8");
 
-// Replace Capacitor's template splash with the existing app icon. Keep this
+// Replace Capacitor's template splash with the approved Adazi splash. Keep this
 // reproducible: android/ is generated, so never rely on manual resource edits.
 const stylesPath = resolve(app, "src/main/res/values/styles.xml");
 let styles = readFileSync(stylesPath, "utf8");
