@@ -49,4 +49,6 @@ test("Aliyun mirror code targets Android root buildscript, not app module", () =
   assert.ok(script.includes('rootGradlePath = resolve(home, "android/build.gradle")'));
   assert.ok(script.includes('readFileSync(rootGradlePath, "utf8")'));
   assert.ok(script.includes("PANTOMIME_MAVEN_MIRROR"));
+  assert.ok(script.includes("node_modules/@capacitor/android/capacitor/build.gradle"));
+  assert.ok(script.includes("android/capacitor-cordova-android-plugins/build.gradle"));
 });

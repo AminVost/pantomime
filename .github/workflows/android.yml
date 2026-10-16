@@ -43,11 +43,14 @@ jobs:
       - name: Verify mirror configuration on root Gradle project
         working-directory: mobile
         run: |
-          cp android/build.gradle android/build.gradle.original
+          files=(android/build.gradle android/capacitor-cordova-android-plugins/build.gradle node_modules/@capacitor/android/capacitor/build.gradle)
+          if [ -f node_modules/@capacitor/app/android/build.gradle ]; then files+=(node_modules/@capacitor/app/android/build.gradle); fi
+          for f in "${files[@]}"; do cp "$f" "$f.pantomime-original"; done
           PANTOMIME_MAVEN_MIRROR=aliyun node scripts/configure-android.mjs
-          grep -q 'https://maven.aliyun.com/repository/google' android/build.gradle
-          cp android/build.gradle.original android/build.gradle
-          rm android/build.gradle.original
+          for f in "${files[@]}"; do
+            if [ "$f" != "node_modules/@capacitor/app/android/build.gradle" ]; then grep -q 'https://maven.aliyun.com/repository/google' "$f"; fi
+            mv "$f.pantomime-original" "$f"
+          done
       - name: Restore optional release keystore
         working-directory: mobile
         env:
