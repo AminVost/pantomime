@@ -47,7 +47,8 @@ test("RTL and native app id", () => {
 test("Aliyun mirror code targets Android root buildscript, not app module", () => {
   const script = load("scripts/configure-android.mjs");
   assert.ok(script.includes('rootGradlePath = resolve(home, "android/build.gradle")'));
-  assert.ok(script.includes('readFileSync(rootGradlePath, "utf8")'));
+  assert.ok(script.includes('readFileSync(entry.path, "utf8")'));
+  assert.ok(script.includes('path: rootGradlePath'));
   assert.ok(script.includes("PANTOMIME_MAVEN_MIRROR"));
   assert.ok(script.includes("node_modules/@capacitor/android/capacitor/build.gradle"));
   assert.ok(script.includes("android/capacitor-cordova-android-plugins/build.gradle"));
