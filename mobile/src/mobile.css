@@ -4,6 +4,7 @@
 .screen { overflow: hidden; }
 .screen > * { flex-shrink: 0; }
 .screen > .hero, .screen > .setup-body, .screen > .turn-center, .screen > .playing-main, .screen > .scoreboard, .library-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.screen > .scoreboard { align-content: start; }
 .hero, .turn-center, .playing-main { justify-content: safe center; }
 .hero > *, .turn-center > *, .playing-main > * { flex-shrink: 0; }
 .screen-footer, .turn-footer, .setup-footer { flex-shrink: 0; }
