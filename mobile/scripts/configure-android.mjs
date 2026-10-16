@@ -51,4 +51,24 @@ if (!gradle.includes(marker)) {
   gradle += appendix;
   writeFileSync(gradlePath, gradle, "utf8");
 }
+
+// Opt-in regional Maven mirror for networks where dl.google.com is unavailable.
+// No dependency version is changed. GitHub CI keeps using the official repositories.
+if (process.env.PANTOMIME_MAVEN_MIRROR === "aliyun") {
+  const mirror = "maven { url 'https://maven.aliyun.com/repository/google' }";
+  let settings = readFileSync(gradlePath, "utf8");
+  if (!settings.includes(mirror)) {
+    let matched = 0;
+    settings = settings.replace(/(repositories\s*\{\s*)(google\(\))/g, (_all, prefix, googleRepository) => {
+      matched += 1;
+      return prefix + mirror + "\n        " + googleRepository;
+    });
+    if (matched !== 2) {
+      throw new Error("Could not find both Gradle repository blocks; check android/build.gradle");
+    }
+    writeFileSync(gradlePath, settings, "utf8");
+  }
+  console.log("Aliyun Android Maven mirror enabled for local Gradle resolution.");
+}
+
 console.log("Native manifest, portrait mode, launcher icon, and optional signing ready.");
