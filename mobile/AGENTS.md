@@ -46,7 +46,7 @@ Android Studio manual signed-release wizard with the **already created** release
 - The Android Back adapter dispatches "pantomime:native-back", while the generated GameApp listens for it. Verify modal/back/exit interactions on real Android.
 - Catalog expansion is deterministic: current baseline is 33 categories and 771 offline words on the mobile build, 25 and 600 in web's static pack (as of this documented commit). Counts can legitimately change after word tasks; update docs and tests.
 - Updating application branding requires consistent changes to web icon sources and Capacitor appName. Launcher may be cached in phone settings; always test a clean install.
-- The code currently sets a native drawable icon from the 512 px web icon. Evaluate adaptive icon/background behavior before store launch; do not falsely assume this is a verified final store-ready icon.
+- Brand: «ادازی» / Adazi, approved by the owner on 2026-10-16. Masters are branding/source/*.png; generate-brand.mjs resizes/pads without altering the supplied artwork. Android uses mipmap/adazi_launcher (legacy densities + adaptive foreground/background) and a separately padded splash. Verify actual launcher masks and splash timing on phones before store launch.
 - For changing Gradle repositories, Gradle :capacitor-android defines its **own** buildscript; root configuration alone does not cover it. The configure script knows about this.
 - Toolchain used in successful CI: Node 22, JDK 21, Gradle/AGP 8.11.1/8.7.2, Android compile/target SDK 35; actual installed versions and supported Android Studio should be checked before changes.
 - Every significant change must preserve ability to regenerate native assets from a clean clone, not only from one developer's installed SDK.

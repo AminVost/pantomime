@@ -4,7 +4,7 @@ Read after AGENTS.md only for architecture, ownership, or cross-platform feature
 
 ## Overview
 
-Pantomin is one game UI with two delivery environments:
+Adazi is one game UI with two delivery environments:
 
 A. Next.js web/PWA: Next.js 16.2.12, React 19.2.8, TypeScript, Tailwind 4/custom CSS, optional Prisma 6.19/MySQL. The web app has ONLINE (async API/MySQL sync) and LOCAL (static JSON) modes.
 
@@ -54,9 +54,11 @@ B. Offline Android: React 19 + Vite 7 + Capacitor 7 + Android Gradle. The app bu
 | Web local catalog | public/data/catalog.json | lib/game/catalog-client.ts |
 | Mobile-only extra words | mobile/scripts/prepare.mjs | mobile/tests/offline.test.mjs |
 | Mobile offline transport and selection | mobile/src/offline/* | prepare alias overrides, GameApp.tsx |
-| Android startup/native Back | mobile/src/main.tsx; mobile/src/native-back.ts | prepare.mjs generated game event listener |
+| Android startup/native Back | mobile/src/main.tsx; mobile/src/native-back.ts | canonical GameApp listener; PersonalLibrary handles its nested dialogs |
+| Personal Android library | mobile/src/PersonalLibrary.tsx; mobile/src/offline/personal-catalog.ts | negative IDs/localStorage; injected through GameApp renderPersonalLibrary; catalog adapter merges bundled and personal data |
+| Android viewport/actions | mobile/src/mobile.css | main.tsx imports after shared styles; bounded viewport, middle scrolling, pinned footer/modal actions |
 | Native app metadata | mobile/capacitor.config.ts; mobile/scripts/configure-android.mjs | generated android/app/build.gradle, AndroidManifest.xml |
-| Icons | public/icons/* | mobile/scripts/prepare.mjs, PWA manifest, app/layout.tsx |
+| Brand/icons | branding/source/*.png -> mobile/scripts/generate-brand.mjs -> public/brand/* + public/icons/* | prepare.mjs copies for Android; configure-android.mjs writes adaptive/legacy icons, splash and native labels |
 | Native local Maven mirrors | mobile/scripts/configure-android.mjs | android/build.gradle and node_modules/@capacitor/** generated files |
 | Web API/MySQL | app/api/**, lib/db/prisma.ts, prisma/schema.prisma | lib/game/validation.ts, server outbox |
 | CI packaging | .github/workflows/android.yml | Node/Java/Gradle, optional signing secrets |
@@ -93,6 +95,7 @@ Durable change recipe:
 - Most gameplay state lives in GameApp React state: screen, setup, game, active team, categories, selected points, used choices/word IDs, queue, word, timer end, scores and modal.
 - LocalStorage "pantomin-*" keys hold resume and preferences (see GAME_FLOW.md). Android uses the WebView's app-private localStorage; uninstall or clear app data erases it. There is no cloud sync.
 - Catalog is deterministic build-time data. JSON entries have category IDs, word IDs, point levels, title/categoryName, and category count metadata.
+- Android also merges versioned user content at runtime (`pantomin-personal-catalog-v1`). Packaged IDs stay positive; personal IDs descend from -1 without recycling. Counts are recomputed on merge. Editing/deletion are blocked while an unfinished game is saved; adding to an existing topic can become available on the next catalog reload, while a new topic is selected for a new game.
 - Native back button is sent to the generated React UI as a custom event. It is not Android navigation-stack routing.
 
 ## Browser, perf and design

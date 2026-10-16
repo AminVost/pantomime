@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import sharp from "sharp";
 
 const home = resolve(import.meta.dirname, "..");
 const app = resolve(home, "android/app");
@@ -11,8 +12,8 @@ if (!existsSync(manifestPath) || !existsSync(gradlePath) || !existsSync(rootGrad
 }
 let xml = readFileSync(manifestPath, "utf8");
 xml = xml.replace('android:allowBackup="true"', 'android:allowBackup="false"');
-xml = xml.replace(/android:icon="@[^"]+"/, 'android:icon="@drawable/pantomime_icon"');
-xml = xml.replace(/android:roundIcon="@[^"]+"/, 'android:roundIcon="@drawable/pantomime_icon"');
+xml = xml.replace(/android:icon="@[^"]+"/, 'android:icon="@mipmap/adazi_launcher"');
+xml = xml.replace(/android:roundIcon="@[^"]+"/, 'android:roundIcon="@mipmap/adazi_launcher"');
 // WebView navigator.vibrate requires the Android VIBRATE permission.
 if (!xml.includes("android.permission.VIBRATE")) {
   xml = xml.replace("</manifest>", '    <uses-permission android:name="android.permission.VIBRATE" />\n</manifest>');
@@ -24,9 +25,46 @@ xml = xml.replace(/<activity\b[\s\S]*?>/, tag => {
   return value;
 });
 writeFileSync(manifestPath, xml, "utf8");
-const icon = resolve(app, "src/main/res/drawable-nodpi/pantomime_icon.png");
-mkdirSync(dirname(icon), { recursive: true });
-copyFileSync(resolve(home, "public/icons/icon-512.png"), icon);
+const res = resolve(app, "src/main/res");
+const writeResource = (path, contents) => {
+  const target = resolve(res, path);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, contents, "utf8");
+};
+for (const [density, size] of [["mdpi", 48], ["hdpi", 72], ["xhdpi", 96], ["xxhdpi", 144], ["xxxhdpi", 192]]) {
+  const target = resolve(res, `mipmap-${density}/adazi_launcher.png`);
+  mkdirSync(dirname(target), { recursive: true });
+  await sharp(resolve(home, "public/icons/icon-512.png")).resize(size, size).png().toFile(target);
+}
+for (const [file, drawable] of [["adazi-adaptive-foreground.png", "adazi_launcher_foreground.png"], ["adazi-splash.png", "adazi_splash.png"]]) {
+  const target = resolve(res, "drawable-nodpi", drawable);
+  mkdirSync(dirname(target), { recursive: true });
+  copyFileSync(resolve(home, "public/brand", file), target);
+}
+writeResource("values/adazi_colors.xml", '<resources><color name="adazi_icon_background">#f2eeff</color></resources>\n');
+writeResource("mipmap-anydpi-v26/adazi_launcher.xml", '<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/adazi_icon_background"/><foreground android:drawable="@drawable/adazi_launcher_foreground"/></adaptive-icon>\n');
+const stringsPath = resolve(res, "values/strings.xml");
+let strings = readFileSync(stringsPath, "utf8");
+for (const key of ["app_name", "title_activity_main"]) {
+  const tag = new RegExp(`<string name="${key}">[^<]*</string>`);
+  if (!tag.test(strings)) throw new Error("Missing native label resource: " + key);
+  strings = strings.replace(tag, `<string name="${key}">ادازی</string>`);
+}
+writeFileSync(stringsPath, strings, "utf8");
+
+// Replace Capacitor's template splash with the existing app icon. Keep this
+// reproducible: android/ is generated, so never rely on manual resource edits.
+const stylesPath = resolve(app, "src/main/res/values/styles.xml");
+let styles = readFileSync(stylesPath, "utf8");
+const launchTheme = /<style name="AppTheme.NoActionBarLaunch"[\s\S]*?<\/style>/;
+if (!launchTheme.test(styles)) throw new Error("Cannot locate Android launch theme");
+styles = styles.replace(launchTheme, `<style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="android:background">#f6f3ef</item>
+        <item name="windowSplashScreenBackground">#f6f3ef</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/adazi_splash</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+    </style>`);
+writeFileSync(stylesPath, styles, "utf8");
 
 const marker = "// PANTOMIME_RELEASE_SIGNING_V1";
 let gradle = readFileSync(gradlePath, "utf8");

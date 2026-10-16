@@ -1,20 +1,21 @@
 # Branding, name, icon, typography and word-catalog guide
 
-This is planning guidance for Codex, NOT authorization to rename or replace anything. User wants to review the name and create a unique, attention-grabbing logo later, while preserving the actual game experience.
+The user explicitly selected «ادازی» and supplied the two final PNG assets on 2026-10-16. This guide records that approved brand; future redesign still needs an explicit request.
 
 ## 1. Current baseline verified in source
 
-- Working display name: «پانتومین». Homepage tagline: «کمتر حرف بزن، بیشتر بازی کن.»
+- Approved display name: «ادازی» / Adazi. Homepage descriptor: «ادابازی و پانتومیم برای دورهمی‌های شما».
 - Android package ID: ir.aminvost.pantomime. This is a durable update identity, independent of app name and icon.
-- Logo/brand heading currently rendered by components/game/GameApp.tsx; small "پ" mark is CSS/markup.
-- CSS mascot: components/game/Mascot.tsx and its rules in app/globals.css.
+- `branding/source/adazi-mascot.png` is the exact second attachment (1254×1254); `adazi-lockup.png` is the exact first attachment (1448×1086). Original bytes/alpha are preserved. No AI redraw, crop or recolor.
+- The mascot is used in app/header icons and game screens; the lockup appears once on HOME. Shared `Mascot.tsx` now displays responsive artwork with gentle CSS motion, rather than a different CSS-drawn character.
 - Main styling: app/globals.css :root and html[data-theme="dark"]. Key tokens --bg, --surface, --text, --accent, --accent-2, --success, --danger; current recognizable purple/cyan highlights.
 - Font: Vazirmatn; web uses Next/font in app/layout.tsx, mobile uses locally bundled @fontsource-variable/vazirmatn.
 - Web icons: public/icons/icon-192.png, icon-512.png, icon-maskable-512.png, apple-touch-icon.png.
-- Current Android build script uses icon-512 as drawable-nodpi/pantomime_icon.png (a basic icon approach, adaptive icon layers not yet separately designed/verified).
+- `mobile/scripts/generate-brand.mjs` (sharp, development-only) creates proportional lossless WebP UI sizes, PNG PWA/Apple/store icons, an Android adaptive foreground and splash. Every normal mobile prepare regenerates from the masters and copies the UI/native assets into mobile/public. Committed public outputs also serve the root web app.
+- `configure-android.mjs` writes native labels «ادازی», legacy launcher densities and Android 8+ adaptive resources, referencing `@mipmap/adazi_launcher`; the foreground has padding for common masks, with an opaque lavender background. Splash uses a separately padded transparent mascot. Device masking/timing still needs actual Android QA.
 - Name also appears in mobile/index.html, mobile/capacitor.config.ts, app/layout.tsx, public/manifest.webmanifest, README/docs.
 
-## 2. Proposed brand-review workflow (do not skip user approval)
+## 2. Workflow for any future brand review (current choice already approved)
 
 When asked to start:
 1. Get direction: family-friendly, humorous, energetic, premium, minimal, distinctive Persian identity; desired age group; name must be easy to say and find in Bazaar/Myket.
@@ -56,9 +57,9 @@ Avoid shipping font files to users via chat. Font dependency code/package is fin
 
 ### Do not overlook the native generator
 
-The default source icon is public/icons/icon-512.png; prepare.mjs copies it to mobile/assets/icon.png and mobile/public/icons. configure-android.mjs copies from mobile/public/icons to Android drawable. A manual edit of mobile/android/res or mobile/public/icons alone is lost when regenerated.
+The authoritative inputs are now `branding/source/*.png`. Run `cd mobile; npm run brand:assets` (or ordinary npm test/build) to reproduce public outputs. `prepare.mjs` copies the results and `configure-android.mjs` writes native resources and app_name/title_activity_main. A manual edit of mobile/android/res or mobile/public alone is lost when regenerated. Standalone ZIPs use their materialized generated/public assets without requiring the monorepo master files.
 
-For a more sophisticated adaptive icon process, implement deterministic script-based image generation or a tracked native resource strategy, update tests, and verify APK launcher masks. Do not assume current one-PNG drawable implementation is store-polished.
+Native app ID, package_name, custom_url_scheme, signing configuration/alias and existing pantomin-* storage keys are compatibility identifiers and are intentionally not renamed. Display strings, web metadata, PWA/install copy, product-name seed, documentation and artifact labels use Adazi. Store text and verified source links are in `docs/STORE_LISTING.md`; do not claim that HTML keywords control store ranking.
 
 ## 5. Offline words and category data (NO MySQL on Android)
 
@@ -89,6 +90,12 @@ Types in types/game.ts:
 Existing-category extras are keyed by slug in mobile/scripts/prepare.mjs. Web Prisma seed lives in prisma/seed.ts but is not read by the mobile app.
 
 ## 6. Content editing rules
+
+### User-created Android content (2026-10-16)
+
+«کلمات من» on HOME (also HOME settings) is an Android-only editor. Owners can add topics or newline-separated words to existing topics, choose 2/4/6 points, edit their words, search and delete with confirmation. It never edits the packaged JSON. `mobile/src/offline/personal-catalog.ts` owns versioned localStorage, validation (topic 2–40 chars, word 2–100; max 200 topics/5000 words), Persian ی/ک/spacing/diacritics normalization, duplicate rejection within a topic across difficulties, negative IDs, merge/counts and quota errors. List rendering is paginated in groups of 50. Empty topics stay in the editor but have no playable levels until words are added.
+
+Personal IDs are never recycled; deleting a topic deletes only its personal words. Existing packaged words/topics cannot be changed. A saved ACTIVE game locks destructive changes to protect queued/resumable words; additions remain allowed. New topics are enabled in game settings for a new match. This content is on-device only and is lost on uninstall/clear-data. Damaged personal storage is preserved and reported by the editor; bundled gameplay remains available.
 
 - Entries must be understandable, fun, physically actable without dialogue, suitable for intended Iranian age group, and assigned realistic 2 (easy), 4 (medium), 6 (hard) levels.
 - Normalize Persian orthography (ی/ي, ک/ك, diacritics, spacing and ZWNJ) and check near-duplicates, not just exact string matches.

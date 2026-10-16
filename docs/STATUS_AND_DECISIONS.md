@@ -6,6 +6,18 @@ Date of snapshot: 2026-10-16.
 Branch: feat/android-offline-pantomime, remote AminVost/pantomime.
 Default web branch: main (untouched by Android implementation in this workflow).
 
+## Android UX and personal content update — 2026-10-16
+
+- REVEAL now starts with a privacy cover; the word is absent from DOM/accessibility until «نمایش کلمه». Resuming a local timed turn returns through the same cover and «ادامه زمان».
+- Every game screen has Home access. Explicit Home/Android Back pauses local gameplay with exact remaining milliseconds, preserving turn ID, scores, choices and queue. SETUP drafts are saved separately. New game replacement requires confirmation. Backgrounding without using Home still uses the original wall-clock deadline.
+- Snapshot key/version remain `pantomin-active-game-v1` / 1. Optional `pausedRemainingMs` and `resolutionReason` recover paused turns and interrupted result animations; old v1 snapshots remain supported.
+- Android-only «کلمات من» adds personal topics and words in existing/new topics, bulk newline entry, 2/4/6 difficulty, duplicate validation, word editing, deletion confirmations and search/pagination. Negative monotonic IDs cannot collide with packaged IDs. Active saved games lock editing/deletion; additions remain allowed. Storage is private localStorage, without server/sync; uninstall/clear-data deletes it.
+- Android settings omit runtime/offline/server copy. `mobile/src/mobile.css` keeps primary actions and modal close controls visible while only middle content scrolls. Shared game/Modal changes also reach web; Android-only library/layout are injected from mobile main. Online web deadlines are not paused.
+- Native startup theme now references the existing app icon instead of Capacitor's template splash. No package, native version, signing configuration or keystore change. Final splash appearance still needs a phone check; the user's referenced attachment was not available to the agent.
+- Browser verification passed: all game screens/resumes, exact timer/turn preservation, reload during result feedback, replacement/fault scoring, normal timeout, risk30 success/failure, expired legacy v1 restore, eight-team draft, personal CRUD/duplicates/persistence/queue exhaustion, dark settings, simulated native Back, and fixed actions at 320×568 and 360×640. Zero page errors or `/api/` requests in the reusable tour (`mobile/tests/game-flow.browser.js`). A separate three-round game also completed. These are browser tests, not physical Android tests.
+- `npm test`: 10 tests passed; mobile TypeScript/Vite build passed. Android sync/configuration succeeded (sandbox required escalation for Windows user lookup). Final debug and release assembly succeeded in 22s using the already installed JDK 21 and configured Aliyun repositories; debug is 4,332,981 bytes, unsigned release 3,329,292 bytes. Browser tour including multi-batch continuous refill passed after final source changes. Final source rebuild details are recorded in QA notes. These builds do not replace the owner's previously signed release or prove device/store readiness.
+- Still required: physical-device splash, keyboard/safe-area/Back, haptics/audio, background/process lifecycle and upgrade of the final APK with the existing signing key. No device was attached (`adb devices` empty). No new store submission or signature verification is claimed.
+
 ## Confirmed product requirements
 
 1. Keep original polished web design, Persian RTL, animations and core flow; optimize responsibly where needed.
@@ -13,7 +25,7 @@ Default web branch: main (untouched by Android implementation in this workflow).
 3. Add more entertaining words/topics; present mobile baseline 33 categories / 771 words.
 4. Publish Android release to Café Bazaar and Myket.
 5. Developer will do future changes using Codex in VS Code; AGENTS and topic docs must let sessions work without re-tracing entire project.
-6. **Future decision pending:** product name re-evaluation and unique/professional logo; do not silently rename or replace source assets before user approval.
+6. **Brand approved 2026-10-16:** «ادازی» / Adazi; use the owner's two supplied PNGs exactly, with proportional sizing/padding only. See BRANDING_AND_CONTENT.
 7. Prioritize real performance, smoothness, reliability, and safe updates over architectural novelty.
 
 ## Chronology of verified outcomes
@@ -35,15 +47,15 @@ Default web branch: main (untouched by Android implementation in this workflow).
 ## Still OPEN / NOT VERIFIED
 
 - Signed APK, package/version SDK metadata and six real-device smoke cases are now confirmed by user. They should not be repeatedly re-traced on this same APK.
-- Extra device edge cases remain: 30-point forfeit, continuous word queue/exhaustion, fault/change-word, sound/vibration, themes, Android Back and modal behavior, background timer expiry, update/migration behavior, different device sizes.
-- Decide final public app name and distinct professional logo. None selected yet.
-- Complete adaptive launcher/store graphics and capture genuine screenshots of final build.
+- Extra physical-device edge cases remain: 30-point forfeit, continuous word queue/exhaustion, fault/change-word, sound/vibration, themes, Android Back and modal behavior, background timer expiry, update/migration behavior, different device sizes. Several now have browser regression coverage above; that does not replace device evidence.
+- Brand is selected: Adazi and the two supplied PNGs. Verify the final branded APK on physical Android before publication.
+- Adaptive launcher/store exports are generated from the approved art; physical launcher/splash checks and genuine phone screenshots are still required.
 - Prepare accurate store/privacy/support listing details, validate current Bazaar/Myket requirements, upload and obtain review acceptance.
 - Test the NEW final signed APK after all future branding/content/UI changes; this current smoke test doesn't transfer automatically to changed binaries.
 
 ## Release identity and baseline snapshot
 
-- Current display label: پانتومین.
+- Current display label: ادازی.
 - Current Android appId/package ID: ir.aminvost.pantomime.
 - Owner-created signing alias: pantomime; actual keystore/private passwords unknown to Codex and must remain private.
 - Verified current release APK compileSdk/targetSdk=35, minSdk=23.
@@ -54,7 +66,7 @@ Default web branch: main (untouched by Android implementation in this workflow).
 ## Active next-step order (unless user changes priority)
 
 1. Packaging milestone complete: user verified signed APK, actual Android manifest details and six essential real-phone test cases.
-2. Review name and logo directions with user, then make the chosen brand consistent across source assets, Android and PWA. Do not change package ID or key casually.
+2. Apply/verify the approved Adazi brand across source assets, Android and PWA; package ID and signing key remain unchanged. See the latest branding update and STORE_LISTING.md.
 3. Use Codex for approved content/UX/performance changes in focused commits, with mobile tests and builds.
 4. Before actual publication, finish edge-case QA and real-device run with final assets; record device/OS and results.
 5. Build a fresh signed release with SAME keystore, independently verify signature, versionCode, package and SDK again.

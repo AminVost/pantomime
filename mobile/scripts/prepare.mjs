@@ -27,6 +27,7 @@ const replaceRequired = (code, before, after) => {
 };
 
 // Copy the real design system and components, not a reimplementation.
+await import("./generate-brand.mjs");
 for (const path of [
   "components/game/Mascot.tsx",
   "components/game/TimerRing.tsx",
@@ -37,9 +38,13 @@ for (const path of [
   "types/game.ts"
 ]) copy(join(web, path), join(generated, path));
 copy(join(web, "app/globals.css"), join(generated, "globals.css"));
+for (const name of ["adazi-mascot-96.webp", "adazi-mascot-192.webp", "adazi-mascot-384.webp", "adazi-mascot-768.webp", "adazi-lockup-480.webp", "adazi-lockup-960.webp", "adazi-lockup-1440.webp", "adazi-adaptive-foreground.png", "adazi-splash.png", "assets.json"]) {
+  copy(join(web, "public/brand", name), join(mobile, "public/brand", name));
+}
 copy(join(mobile, "src/offline/catalog-client.ts"), join(generated, "lib/game/catalog-client.ts"));
+copy(join(mobile, "src/offline/personal-catalog.ts"), join(generated, "lib/game/personal-catalog.ts"));
 copy(join(mobile, "src/offline/client-sync.ts"), join(generated, "lib/game/client-sync.ts"));
-for (const name of ["icon-192.png", "icon-512.png", "icon-maskable-512.png"]) {
+for (const name of ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"]) {
   copy(join(web, "public/icons", name), join(mobile, "public/icons", name));
 }
 copy(join(web, "public/icons/icon-512.png"), join(mobile, "assets/icon.png"));
@@ -57,24 +62,7 @@ const begin = '      <div className="settings-section-label">حالت اجرا</
 const end = '      <div className="settings-section-label">ظاهر</div>';
 const i = source.indexOf(begin), j = source.indexOf(end, i);
 if (i < 0 || j < 0) throw new Error("Unable to locate mode selection UI");
-source = source.slice(0, i) +
-  '      <div className="settings-section-label">حالت اجرا</div>\n' +
-  '      <div className="runtime-mode-options"><div className="runtime-mode-card selected"><span><strong>آفلاین</strong><small>بازی و امتیازها فقط روی همین گوشی</small></span><b>⚡</b></div></div>\n' +
-  '      <p className="runtime-mode-note">تمام امکانات بدون اینترنت و سرور کار می‌کنند.</p>\n' +
-  source.slice(j);
-// Respect Android's back key without disturbing the web screen flow.
-source = replaceRequired(source, "  const team = currentTeam(game);",
-  '  useEffect(() => {\n' +
-  '    const handleBack = () => {\n' +
-  '      if (modal) { setModal(null); return; }\n' +
-  '      if (screen !== "HOME") { setScreen("HOME"); return; }\n' +
-  '      window.dispatchEvent(new Event("pantomime:native-exit"));\n' +
-  '    };\n' +
-  '    window.addEventListener("pantomime:native-back", handleBack);\n' +
-  '    return () => window.removeEventListener("pantomime:native-back", handleBack);\n' +
-  '  }, [modal, screen]);\n\n' +
-  '  const team = currentTeam(game);');
-source = source.replace('Local · بدون اینترنت', 'آفلاین · بدون اینترنت');
+source = source.slice(0, i) + source.slice(j);
 write(join(generated, "components/game/GameApp.tsx"), source);
 
 // All words are shipped within the APK, no database and no API downloads.

@@ -61,10 +61,17 @@ Present:
 - npm run build runs TypeScript noEmit and Vite build for React assets.
 - GitHub Actions builds debug and release APK/AAB and packages a standalone project; optional CI signing requires secrets.
 
-Not yet present / NOT safe to claim:
-- Comprehensive React gameplay e2e (all 9 screens and modals).
+Separate browser integration coverage (2026-10-16): `mobile/tests/game-flow.browser.js` is a reusable function accepting an isolated Playwright Page. It is not included in `npm test` and requires a Playwright browser runner. Build with `npm run build`, serve with `node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4173`, then pass that file to the Playwright runner (`browser_run_code_unsafe` supports `filename`). It clears the supplied test page's app storage; use a dedicated test profile, never a player's production session.
+
+Verified in that tour: normal full game; HOME/resume from READY, CATEGORY, REVEAL, PLAYING, ROUND_RESULT, SCOREBOARD and WINNER; exact paused timer/turn/penalty preservation; reload during result animation; old-v1 expired deadline; eight-team setup draft; 320×568 footer position before/after scrolling; hidden words absent from DOM before reveal; personal topic/word add/edit/delete/duplicate/reload; continuous queue exhaustion and next-team no-score fallback; dark settings and visible modal close; risk30 success/forfeit; simulated native Back closing a library confirmation. No page errors or API requests. Also exercised a three-round match and 360×640 winner layout.
+
+`npm test` now includes five personal-catalog behavior tests (merge/counts/IDs, Persian duplicate validation and atomic batches, edit/delete/non-recycled IDs, active-game protection, corruption/quota preservation), in addition to the original five.
+
+Final update verification (2026-10-16): 10/10 Node tests; TypeScript/Vite build passed; full browser tour passed with zero page errors/API calls after the final gameplay changes. The continuous tour now consumes eleven personal words, including one replacement and nine correct answers, to exercise batch refill without repeat IDs. Additional random-category and viewport checks at 320×480, 390×844 and 768×1024 passed; reveal actions remained in view without horizontal overflow. Light reveal and dark personal editor screenshots were visually inspected. Final Capacitor sync with existing Aliyun configuration passed; JDK21 `gradlew --offline assembleDebug assembleRelease` finished `BUILD SUCCESSFUL in 22s` (261 tasks). Debug APK: 4,332,981 bytes; unsigned release APK: 3,329,292 bytes. Native bundled index SHA256 matches `mobile/dist/index.html`. These are new, locally assembled artifacts, not the owner's previously signed APK. Root Next.js build was not run (root dependencies are absent); shared React/TypeScript sources were compiled through mobile generation.
+
+Not verified by these checks / NOT safe to claim:
 - Physical phone UX, sound, vibration, background/foreground, timing and install/update behavior.
-- Automated verification of real release signature, manifest/version/permissions from APK.
+- A new owner's release signature or installation/update behavior after these changes (previous signed APK evidence remains in STATUS_AND_DECISIONS).
 - Browser frame-time/perf benchmark on low-end Android hardware.
 - Actual Bazaar/Myket upload or review status.
 
@@ -100,7 +107,7 @@ Web build may need Next/font network and optional MySQL configuration for online
 1. Fresh install; HOME screen; settings, theme light/dark, sound.
 2. SETUP 2/8 teams, names, rounds min/max, duration preset/custom, category choices.
 3. READY pass-the-device screen, CATEGORY list, select 2/4/6 points, ensure chosen combo locked only for that team.
-4. REVEAL word and replacement (-1 point, only once), START timer.
+4. REVEAL cover -> explicit word reveal and replacement (-1 point, only once), START timer.
 5. PLAYING: correct/skip/fault options appropriate to SINGLE/CONTINUOUS, timer and end.
 6. ROUND_RESULT scoring details, SCOREBOARD order, next team and round.
 7. 30-risk correct (+30)/timeout forfeiture; finish when last active team/round exhausted.

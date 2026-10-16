@@ -60,17 +60,17 @@ export function PwaManager() {
   };
 
   return <>
-    <aside className="pwa-install-card" aria-label="نصب پانتومین روی گوشی">
+    <aside className="pwa-install-card" aria-label="نصب ادازی روی گوشی">
       <button className="pwa-install-close" onClick={dismiss} aria-label="بعداً">×</button>
-      <div className="pwa-install-icon">پ</div>
-      <div className="pwa-install-copy"><strong>پانتومین رو روی گوشی داشته باش</strong><small>سریع‌تر باز می‌شه و حالت Local حتی بدون اینترنت هم کار می‌کنه.</small></div>
+      <div className="pwa-install-icon"><img className="brand-icon" src="/brand/adazi-mascot-192.webp" width={40} height={40} alt="" /></div>
+      <div className="pwa-install-copy"><strong>ادازی رو روی گوشی داشته باش</strong><small>سریع‌تر باز می‌شه و حالت Local حتی بدون اینترنت هم کار می‌کنه.</small></div>
       <button className="pwa-install-action" onClick={install}>{ios ? "روش نصب" : "نصب اپ"}</button>
     </aside>
     {iosHelp && <div className="pwa-guide-backdrop" onClick={() => setIosHelp(false)}>
       <div className="pwa-guide" onClick={(event) => event.stopPropagation()}>
         <div className="pwa-guide-handle" />
         <h3>روی آیفون، فقط ۳ قدم</h3>
-        <ol><li><b>۱</b><span>دکمه <strong>Share / اشتراک</strong> مرورگر رو بزن.</span></li><li><b>۲</b><span><strong>Add to Home Screen</strong> رو انتخاب کن.</span></li><li><b>۳</b><span><strong>Add</strong> رو بزن؛ بعد از آیکن پانتومین وارد شو.</span></li></ol>
+        <ol><li><b>۱</b><span>دکمه <strong>Share / اشتراک</strong> مرورگر رو بزن.</span></li><li><b>۲</b><span><strong>Add to Home Screen</strong> رو انتخاب کن.</span></li><li><b>۳</b><span><strong>Add</strong> رو بزن؛ بعد از آیکن ادازی وارد شو.</span></li></ol>
         <button className="btn pwa-guide-done" onClick={() => { setIosHelp(false); dismiss(); }}>گرفتم</button>
       </div>
     </div>}

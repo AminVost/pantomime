@@ -22,13 +22,13 @@ Grounded in components/game/GameApp.tsx and types/game.ts as of 2026-10-16. This
     CATEGORY (per-team category+points, or special risk 30)
       | chooseCategoryPoints
       v
-    REVEAL (word, one possible change for -1 score)
+    REVEAL (privacy cover -> explicit reveal; one possible change for -1 score)
       | startTimer
       v
     PLAYING (timer, answer, fault, optional continuous skip)
       | correct in single -> finishRound
       | timer expiry -> beginTimeoutResolution -> finishRound
-      | continuous -> next word/prefetch until time ends
+      | continuous -> next word / local batch refill until time or words end
       v
     ROUND_RESULT -> SCOREBOARD
       | next team / next round -> READY
@@ -57,14 +57,14 @@ Render entry points (in original GameApp):
 | chooseCategoryPoints | locks points and previews selected word |
 | changeWord | 1 use per turn; -1 score; replace unused word |
 | startTimer | sets end timestamp and enters PLAYING |
-| refillQueue | preloads more words in CONTINUOUS mode |
+| fetchQueue / registerAnswer | reserve initial batch and refill locally when the CONTINUOUS queue is consumed |
 | registerFault | -1 point per fault; debounced |
 | registerAnswer | CORRECT / SKIPPED, score and next-word logic |
 | beginTimeoutResolution | visual feedback and delayed round completion |
 | finishRound | result summary, forfeiture of failed risk-30, advance team/round |
 | continueAfterResult / continueAfterScoreboard | navigation |
 
-Find precise implementations by searching the function names, not by re-reading the entire 1160-line GameApp. Internal refs (flowLockRef, actionLockRef, roundEndingRef, roundStatsRef, resolutionTimerRef) protect against double submissions/stale timed callbacks. Keep them when adjusting event paths.
+Find precise implementations by searching the function names, not by re-reading the entire GameApp. Internal refs (flowLockRef, actionLockRef, roundEndingRef, roundStatsRef, resolutionTimerRef) protect against double submissions/stale timed callbacks. Keep them when adjusting event paths.
 
 ## 3. Scoring and safeguards
 
@@ -72,9 +72,10 @@ Find precise implementations by searching the function names, not by re-reading 
 - One team may select a given category + difficulty only once per game; another team is independent.
 - Each selected word ID is added to usedWordIds; selected queue excludes used IDs.
 - SINGLE: correct score = chosen points plus speed bonus of 1..3 if guessed within first one-third of turn; correct ends turn. UI does not expose SKIPPED for SINGLE.
-- CONTINUOUS: typically prefetch 8 words and request more at queue <=4, correct adds chosen points, SKIPPED adds 0 and advances. Time expiry ends turn. Speed bonus is only for SINGLE.
+- CONTINUOUS: reserve up to 8 words initially and refill from the local catalog in batches when the queue is consumed; correct adds chosen points, SKIPPED adds 0 and advances. Time or word exhaustion ends the turn. Speed bonus is only for SINGLE. Word replacement can consume the next reserved word; it must be removed from the queue so it is not shown twice.
 - Both modes: "fault" decreases team's score by 1; repeated faults are possible, with a brief action lock.
-- REVEAL: one word change per turn, costs -1. Current word is replaced from remaining catalog.
+- REVEAL: word is not rendered before «نمایش کلمه». One word change per turn costs -1; replacement comes from the reserved queue or remaining catalog. An explicitly paused timed turn cannot change its word again on resume.
+- CATEGORY disables exhausted difficulty/risk choices based on remaining words, not just original counts. If every legal choice is exhausted, «ادامه بدون امتیاز» advances the team without changing its score (important for small personal catalogs).
 - Special 30 risk: selectedPoints = 30; current candidate is picked from enabled categories' 6-point words, score for successful answer is **30**, no speed bonus, no skip. If timeout before correct answer, mark active team forfeited. Special 30 may be chosen once by each team; on failed risk, remaining team(s) continue or game ends as per advanceGameLocally.
 - Scoreboard sorts non-forfeited first, then score descending, then original team position.
 - Treat "used category combination" and "used word" as distinct concepts.
@@ -82,6 +83,10 @@ Find precise implementations by searching the function names, not by re-reading 
 Potential touchpoints if changing scores: registerAnswer, registerFault, changeWord, finishRound, UI summaries, the (web-only) server scoring endpoints, and corresponding tests. Online mode remains separate from offline.
 
 ## 4. Timer and lifecycle
+
+- Home is available from all game screens. In local mode, explicit Home/Android Back pauses with exact milliseconds and saves the original screen; resume goes through REVEAL privacy and «ادامه زمان», keeping the same turn ID/queue/penalties. Online web mode keeps its existing server deadline.
+- Backgrounding or killing the process without explicitly going Home does not pause time. An expired saved deadline resolves as timeout; an unexpired local turn is covered on restore before continuing.
+- Feedback resolution is persisted (`resolutionReason`) so killing/reloading during the 620ms result animation cannot leave PLAYING with a null timer. Deferred result effects are cleaned up on screen change.
 
 - startTimer creates timerEndAt = Date.now() + roundDuration * 1000; setInterval runs ~120ms but elapsed time uses wall clock.
 - Displayed remaining time is ceil((timerEndAt - Date.now()) / 1000), bounded at 0.
@@ -95,6 +100,8 @@ Potential touchpoints if changing scores: registerAnswer, registerFault, changeW
 | Key | Purpose |
 | --- | --- |
 | pantomin-active-game-v1 | PersistedSnapshot version 1; team/round, queue, word, used IDs, choices, timer, screen |
+| pantomin-setup-v1 | Unfinished setup config and step; removed when a game is created/replaced |
+| pantomin-personal-catalog-v1 | Android personal categories/words and monotonic negative ID allocator |
 | pantomin-sound-v1 | on/off |
 | pantomin-theme | light/dark/system |
 | pantomin-category-preferences-v1 | selected category IDs |
@@ -108,9 +115,11 @@ The Android app stores data inside private WebView storage. Deleting the app or 
 
 PersistedSnapshot.version = 1; if fields change, plan migration/fallback instead of indiscriminate removal. Reset/resume may be impacted by changing available categories/word IDs. Test upgrades with an active saved game.
 
+Optional snapshot fields added 2026-10-16: `pausedRemainingMs` and `resolutionReason` (`correct` / `timeout`). Missing fields use the original deadline and legacy completion fallback. Word visibility is deliberately not persisted. SETUP resume preserves current topic preferences, so settings changed on HOME are not overwritten by an old draft.
+
 ## 6. Mobile-only transforms in prepare.mjs
 
-Original GameApp starts runtime modes as "online"; prepare.mjs replaces BOTH initial useState values with "local", forces storedRuntime and restored snapshot local, removes online toggle from settings, disables flush on boot, and injects a native back handler. The original web code still has online support. **Each mobile build regenerates these adjustments.**
+Original GameApp starts runtime modes as "online"; prepare.mjs replaces BOTH initial useState values with "local", forces storedRuntime and restored snapshot local, removes the complete runtime section from settings, and disables flush on boot. Native Back handling now lives in canonical GameApp (the personal library handles its nested dialogs). The original web code still has online support. **Each mobile build regenerates these adjustments.**
 
 If function signatures or exact source strings change, prepare.mjs may throw "cannot safely patch" (by design). Update adapter and tests together; do not "fix" it by disabling the offline constraints.
 
@@ -121,15 +130,15 @@ If function signatures or exact source strings change, prepare.mjs may throw "ca
 - No repeated word IDs even after changeWord and queue refill.
 - Correct near 0/first third/after bonus window; correct just before timeout.
 - Fault twice, fault rapidly, change word once then try again, skip in continuous.
-- Normal SINGLE turn vs CONTINUOUS prefetch and end.
+- Normal SINGLE turn vs CONTINUOUS batch refill and end.
 - 30-point correct, failure/forfeit, team order after forfeit, last survivor wins.
 - Save/reopen from REVEAL, PLAYING, SCOREBOARD, WINNER; simulated time expiration while in background.
 - Light/dark/theme system, haptic/sound toggles, device back and modals.
 
 ## 8. Current limitations that deserve verification, not unsupported bug claims
 
-- No dedicated automated end-to-end flow tests are presently included in mobile/tests; the existing suite validates catalog, offline wiring and Android mirror config.
-- Native Back currently routes non-HOME screens to HOME and can exit from HOME; verify whether UX needs confirmation/return-to-previous.
+- `mobile/tests/game-flow.browser.js` is a reusable Playwright tour, separate from `npm test`; see QA_AND_WORKFLOW for execution and tested cases.
+- Native Back closes a modal first, otherwise saves/pauses to HOME, and can exit from HOME. Library Back closes its own confirmation or asks before discarding unsaved input. Actual Android events still require device verification.
 - Timers during process death / long background suspension and deferred callbacks need real-device regression.
 - Long session word exhaustion and category choice availability should be exercised.
 - Screens inherit styling from shared global CSS; designer changes require Android small-screen testing.

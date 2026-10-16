@@ -6,7 +6,7 @@ Verified against source and user setup through 2026-10-16. Read this file when t
 
 Android: Capacitor 7 shell bundling React/Vite; NOT React Native, NOT a remote-hosted website. UI, words and Vazirmatn fonts are packaged locally, and app gameplay requires no MySQL or API.
 
-- mobile/capacitor.config.ts: appId ir.aminvost.pantomime, appName پانتومین, webDir dist, colors and androidScheme.
+- mobile/capacitor.config.ts: appId ir.aminvost.pantomime, appName ادازی, webDir dist, colors and androidScheme.
 - mobile/scripts/prepare.mjs: copies canonical UI and icons, generates offline catalog, composes mobile/generated.
 - mobile/scripts/configure-android.mjs: edits generated AndroidManifest (portrait/keyboard/backup/vibrate), icon, optional signing, optional regional Maven mirrors.
 - mobile/package.json: android:init, android:configure, android:sync, android:open.
@@ -132,4 +132,6 @@ Check current Bazaar and Myket documentation at publication time for APK/AAB for
 
 ## I. Current release stage (2026-10-16)
 
-Verified by user screenshots: SDK 35 installed, Android Studio and Gradle Sync compatible, local release build shows BUILD SUCCESSFUL with 141 actionable tasks. Created keystore and chose alias pantomime. **Not yet verified**: real certificate on final APK, exact package/version/target from APK, real device QA, updated final logo/name, Bazaar or Myket submission/approval.
+Owner verification for the previous APK includes a valid signature, package/version/SDK metadata and six physical-phone smoke cases; see STATUS_AND_DECISIONS. Subsequent UX/personal-library changes require a fresh signed APK and device regression. Current debug/release assembly uses existing JDK 21 and Aliyun cache; Java 25 bundled with the newer Android Studio is not compatible with this Gradle version (major version 69). Do not downgrade AGP to address that; use the installed JDK 21.
+
+Launch resources are reproducibly configured by `configure-android.mjs`: `AppTheme.NoActionBarLaunch` uses `Theme.SplashScreen`, solid app background, existing `@drawable/pantomime_icon` and `postSplashScreenTheme`. Capacitor's template `@drawable/splash` is no longer referenced by the launch theme. Test the actual startup on pre-12 and Android 12+ phones; compiling resources does not prove masking/timing/appearance. No Package ID, native version, keystore or signing identity was changed in this UX update.

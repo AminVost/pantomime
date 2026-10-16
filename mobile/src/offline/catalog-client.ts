@@ -1,7 +1,8 @@
 import type { CatalogPackDTO, CatalogWordDTO, RuntimeMode } from "@/types/game";
+import { mergePersonalCatalog, readPersonalCatalog } from "./personal-catalog";
 let promise: Promise<CatalogPackDTO> | undefined;
 export function readCachedOnlinePack(): CatalogPackDTO | null { return null; }
-export function loadCatalogPack(_mode?: RuntimeMode): Promise<CatalogPackDTO> {
+export function loadBundledCatalogPack(): Promise<CatalogPackDTO> {
   if (!promise) {
     promise = fetch("/data/catalog.json", { cache: "force-cache" }).then(async response => {
       if (!response.ok) throw new Error("کلمات بازی در دسترس نیستند.");
@@ -14,6 +15,12 @@ export function loadCatalogPack(_mode?: RuntimeMode): Promise<CatalogPackDTO> {
     });
   }
   return promise;
+}
+export function loadCatalogPack(_mode?: RuntimeMode): Promise<CatalogPackDTO> {
+  return loadBundledCatalogPack().then(pack => {
+    try { return mergePersonalCatalog(pack, readPersonalCatalog()); }
+    catch { return pack; } // A damaged personal library must not prevent bundled gameplay.
+  });
 }
 export function refreshOnlinePack(): Promise<CatalogPackDTO> { return loadCatalogPack("local"); }
 export function pickCatalogWords(

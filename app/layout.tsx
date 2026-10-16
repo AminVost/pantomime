@@ -20,11 +20,13 @@ const themeScript = `
 })();`;
 
 export const metadata: Metadata = {
-  title: "پانتومین | بازی پانتومیم فارسی",
-  description: "بازی گروهی پانتومیم فارسی، سریع و مناسب دورهمی‌ها",
-  applicationName: "پانتومین",
+  title: "ادازی | ادابازی و پانتومیم فارسی",
+  description: "ادازی، بازی ادابازی و پانتومیم فارسی برای دورهمی؛ حدس کلمه، رقابت تیمی، تایمر و موضوع‌ها و کلمات دلخواه.",
+  keywords: ["ادازی", "ادابازی", "ادا بازی", "ادا‌بازی", "پانتومیم", "بازی پانتومیم", "بازی دورهمی", "بازی گروهی", "حدس کلمه", "Adazi", "charades"],
+  openGraph: { title: "ادازی | ادابازی و پانتومیم", description: "بازی گروهی حدس و اجرا برای دورهمی‌های شما؛ با موضوع‌ها و کلمات دلخواه.", locale: "fa_IR", type: "website" },
+  applicationName: "ادازی",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "پانتومین", statusBarStyle: "black-translucent" },
+  appleWebApp: { capable: true, title: "ادازی", statusBarStyle: "black-translucent" },
   icons: { icon: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }, { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" }], apple: "/icons/apple-touch-icon.png" }
 };
 

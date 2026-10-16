@@ -72,21 +72,21 @@ jobs:
       - name: Export debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: pantomime-debug-apk
+          name: adazi-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/*.apk
       - name: Export release binaries
         uses: actions/upload-artifact@v4
         with:
-          name: pantomime-release-binaries
+          name: adazi-release-binaries
           path: |
             mobile/android/app/build/outputs/apk/release/*.apk
             mobile/android/app/build/outputs/bundle/release/*.aab
       - name: Pack standalone Android source
         run: |
           cd mobile
-          zip -qr ../pantomime-android-project.zip . -x 'node_modules/*' 'android/.gradle/*' 'android/app/build/*' 'android/build/*' 'android/.idea/*' 'release.jks' '.env*' 'android/local.properties'
+          zip -qr ../adazi-android-project.zip . -x 'node_modules/*' 'android/.gradle/*' 'android/app/build/*' 'android/build/*' 'android/.idea/*' 'release.jks' '.env*' 'android/local.properties'
       - name: Export Android project
         uses: actions/upload-artifact@v4
         with:
-          name: pantomime-android-project
-          path: pantomime-android-project.zip
+          name: adazi-android-project
+          path: adazi-android-project.zip

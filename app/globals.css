@@ -269,32 +269,19 @@ html[data-theme="dark"] .ambient-blob-c { background: #d153ad; opacity: .09; }
 .confetti i:nth-child(4n){ background:var(--danger); }
 @keyframes confetti-fall { to { transform:translate3d(var(--x,10px),110vh,0) rotate(560deg); opacity:.2; } }
 
-.mascot { position:relative; width:104px; height:104px; display:grid; place-items:center; }
-.mascot-sm { transform:scale(.7); margin:-15px; }
-.mascot-lg { transform:scale(1.18); margin-block:8px 28px !important; }
-.mascot-shadow { position:absolute; width:66%; height:15%; bottom:5%; border-radius:50%; background:rgba(30,30,45,.13); filter:blur(7px); animation:shadow-breathe 3.2s ease-in-out infinite alternate; }
-.mascot-body { position:relative; width:73px; height:76px; border-radius:32px 32px 27px 27px; background:linear-gradient(150deg, color-mix(in srgb,var(--accent) 86%, #fff), color-mix(in srgb,var(--accent) 50%, var(--accent-2))); box-shadow:inset 0 2px rgba(255,255,255,.34), 0 18px 38px color-mix(in srgb,var(--accent) 20%, transparent); animation:mascot-float 3.2s ease-in-out infinite alternate; }
-.mascot-body::before { content:""; position:absolute; width:23px; height:12px; border-radius:50%; top:9px; right:13px; background:rgba(255,255,255,.17); transform:rotate(-18deg); }
-.mascot-eye { position:absolute; width:7px; height:9px; border-radius:50%; top:31px; background:#1f2230; animation:blink 4.8s infinite; }
-.mascot-eye-right { right:21px; } .mascot-eye-left { left:21px; }
-.mascot-mouth { position:absolute; width:15px; height:7px; border-bottom:2px solid rgba(31,34,48,.8); border-radius:0 0 12px 12px; top:48px; left:29px; }
-.mascot-arm { position:absolute; width:9px; height:30px; border-radius:12px; background:color-mix(in srgb,var(--accent) 70%, var(--accent-2)); top:42px; z-index:-1; transform-origin:top center; }
-.mascot-arm-right { right:-6px; transform:rotate(-24deg); } .mascot-arm-left { left:-6px; transform:rotate(24deg); }
-.mascot-thinking .mascot-eye-right { transform:translateY(1px); }
-.mascot-thinking .mascot-eye-left { transform:translate(2px,-2px); }
-.mascot-thinking .mascot-mouth { width:8px; height:8px; border:2px solid rgba(31,34,48,.75); border-radius:50%; left:32px; }
-.mascot-ready .mascot-arm-right { animation:wave .7s ease-in-out infinite alternate; }
-.mascot-tense .mascot-body { animation:tense .38s ease-in-out infinite alternate; }
-.mascot-tense .mascot-mouth { border-radius:12px 12px 0 0; border-top:2px solid rgba(31,34,48,.8); border-bottom:0; }
-.mascot-celebrate .mascot-body { animation:celebrate .55s var(--ease-spring) infinite alternate; }
-.mascot-celebrate .mascot-arm-right { transform:rotate(-135deg); } .mascot-celebrate .mascot-arm-left { transform:rotate(135deg); }
-.mascot-sad .mascot-mouth { border-radius:12px 12px 0 0; border-top:2px solid rgba(31,34,48,.8); border-bottom:0; top:53px; }
+.brand-icon { width:36px; height:36px; flex-shrink:0; object-fit:contain; }
+.home-brand { margin:0 auto; width:min(100%,440px); }
+.brand-lockup { display:block; width:100%; height:auto; max-height:min(42svh,330px); object-fit:contain; }
+.mascot { position:relative; width:112px; height:112px; display:grid; place-items:center; flex-shrink:0; }
+.mascot-sm { width:80px; height:80px; }
+.mascot-lg { width:160px; height:160px; margin-block:4px 18px; }
+.mascot-art { width:100%; height:100%; object-fit:contain; user-select:none; animation:mascot-float 3.2s ease-in-out infinite alternate; }
+.mascot-celebrate .mascot-art { animation:celebrate .7s var(--ease-spring) infinite alternate; }
+.mascot-tense .mascot-art { animation:tense .38s ease-in-out infinite alternate; }
+.mascot-thinking .mascot-art { animation:mascot-float 2.4s ease-in-out infinite alternate; }
 @keyframes mascot-float { to { transform:translate3d(0,-6px,0) rotate(1deg); } }
-@keyframes shadow-breathe { to { transform:scale(.87); opacity:.6; } }
-@keyframes blink { 0%,46%,50%,100%{ transform:scaleY(1); } 48%{ transform:scaleY(.08); } }
-@keyframes wave { to { transform:rotate(-105deg); } }
 @keyframes tense { to { transform:translateX(2px) rotate(1deg); } }
-@keyframes celebrate { to { transform:translateY(-10px) rotate(3deg); } }
+@keyframes celebrate { to { transform:translateY(-8px) rotate(3deg); } }
 
 .modal-backdrop { position:fixed; z-index:20; inset:0; display:flex; align-items:flex-end; justify-content:center; padding:18px; background:rgba(12,15,22,.36); backdrop-filter:blur(7px); animation:fade-in var(--fast) ease both; }
 .modal-card { width:min(100%,520px); max-height:min(82dvh,700px); overflow:auto; border:1px solid var(--line); border-radius:30px; background:var(--surface-strong); box-shadow:var(--shadow-float); padding:10px 18px max(18px,env(safe-area-inset-bottom)); animation:sheet-up var(--normal) var(--ease) both; }

@@ -1,5 +1,5 @@
-const CACHE = "pantomin-pwa-v1.4.0";
-const CORE = ["/manifest.webmanifest", "/data/catalog.json", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png", "/icons/apple-touch-icon.png"];
+const CACHE = "adazi-pwa-v1.5.0";
+const CORE = ["/brand/adazi-mascot-768.webp", "/brand/adazi-lockup-1440.webp", "/brand/adazi-mascot-96.webp", "/brand/adazi-mascot-192.webp", "/brand/adazi-mascot-384.webp", "/brand/adazi-lockup-480.webp", "/brand/adazi-lockup-960.webp", "/manifest.webmanifest", "/data/catalog.json", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png", "/icons/apple-touch-icon.png"];
 
 async function precacheAppShell() {
   const cache = await caches.open(CACHE);
@@ -10,7 +10,7 @@ async function precacheAppShell() {
   const html = await response.text();
   const assets = [...html.matchAll(/(?:src|href)=["']([^"']+)["']/g)]
     .map((match) => match[1])
-    .filter((url) => url.startsWith("/_next/static/") || url.startsWith("/icons/") || url === "/manifest.webmanifest");
+    .filter((url) => url.startsWith("/_next/static/") || url.startsWith("/icons/") || url.startsWith("/brand/") || url === "/manifest.webmanifest");
   await Promise.all([...new Set(assets)].map((url) => cache.add(url).catch(() => undefined)));
 }
 

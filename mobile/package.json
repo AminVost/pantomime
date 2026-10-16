@@ -1,9 +1,10 @@
 {
-  "name": "pantomime-android-offline",
+  "name": "adazi-android-offline",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "brand:assets": "node scripts/generate-brand.mjs",
     "prepare:assets": "node scripts/prepare.mjs",
     "dev": "npm run prepare:assets && vite",
     "build": "npm run prepare:assets && tsc --noEmit && vite build",
@@ -30,6 +31,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.0.0",
+    "sharp": "0.35.5",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",
     "vite": "^7.0.0"

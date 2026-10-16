@@ -688,8 +688,8 @@ async function main() {
 
   await prisma.setting.upsert({
     where: { key: "product_name" },
-    update: { value: "پانتومین" },
-    create: { key: "product_name", value: "پانتومین" }
+    update: { value: "ادازی" },
+    create: { key: "product_name", value: "ادازی" }
   });
 
   console.log(`Seed complete: ${categories.length} categories, expanded word pool`);
