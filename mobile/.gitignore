@@ -7,3 +7,4 @@ android/
 *.jks
 *.keystore
 .env*
+qa-*.png

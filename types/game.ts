@@ -10,6 +10,7 @@ export type TeamDTO = {
   id: string;
   name: string;
   colorKey: string;
+  avatarId?: string;
   score: number;
   position: number;
   forfeited: boolean;

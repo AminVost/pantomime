@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 
 const mobile = resolve(import.meta.dirname, "..");
@@ -31,12 +31,17 @@ await import("./generate-brand.mjs");
 for (const path of [
   "components/game/Mascot.tsx",
   "components/game/TimerRing.tsx",
+  "components/game/GameAudio.ts",
+  "components/game/TeamAvatar.tsx",
   "components/ui/AmbientBackground.tsx",
   "components/ui/AppShell.tsx",
   "components/ui/Button.tsx",
   "components/ui/Modal.tsx",
   "types/game.ts"
 ]) copy(join(web, path), join(generated, path));
+for (const name of readdirSync(join(web, "public/audio"))) {
+  if (name.endsWith(".m4a") && name !== "timeout-original.m4a") copy(join(web, "public/audio", name), join(mobile, "public/audio", name));
+}
 copy(join(web, "app/globals.css"), join(generated, "globals.css"));
 for (const name of ["adazi-mascot-96.webp", "adazi-mascot-192.webp", "adazi-mascot-384.webp", "adazi-mascot-768.webp", "adazi-lockup-480.webp", "adazi-lockup-960.webp", "adazi-lockup-1440.webp", "adazi-adaptive-foreground.png", "adazi-splash.png", "assets.json"]) {
   copy(join(web, "public/brand", name), join(mobile, "public/brand", name));

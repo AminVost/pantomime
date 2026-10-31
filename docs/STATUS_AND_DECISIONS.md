@@ -86,4 +86,13 @@ Never write signing passwords, private API keys, personal identification data, s
 
 ## When user asks Codex to continue
 
+### 2026-10-31 — Offline audio and team identities
+
+- User requested stronger, clearer audio, their attached timeout recording, start bell, two background tracks, last-ten-second ticking and modern selectable team avatars/colors.
+- Added packaged 48 kHz AAC audio, two original instrumental loops, gesture-unlocked shared audio mixer, music ducking, mute/volume persistence and background cleanup. Original attachment preserved in public/audio; Android packaging excludes that duplicate master.
+- Added eight original scalable mascot avatars and eight colors in team setup; optional persisted fields retain v1 compatibility. Canonical shared UI remains the source for Android generation; no network dependency or new native plugin.
+- Verification: 18/18 Node tests, TypeScript/Vite production build, targeted real-clock browser audio/team tour and complete game-flow tour passed with zero page errors/API calls. Full-tour fake clock needed 150 ms real React-settle waits around 1000 ms result resolution advances. All five key assets decoded at 48 kHz with nonzero peaks below 1; timeout duration 3.04 seconds. Capacitor sync completed using the normal user's process context after sandbox userInfo failure.
+- Physical phone speaker quality/background lifecycle still needs owner verification. The release signing environment is absent; do not label a debug-signed artifact as a production update signed with the owner's existing key.
+- Native build completed: `assembleRelease assembleDebug --offline` with JDK 21 and the existing Aliyun mirror, BUILD SUCCESSFUL (2m38s). Output copies: workspace `apk-output/adazi-audio-teams-debug.apk` (7,604,936 bytes, verified v1/v2 signature) and `adazi-audio-teams-release-unsigned.apk` (6,509,268 bytes). Both ZIPs contain byte-identical copies of all seven current audio assets and latest UI bundle. Manifest: ir.aminvost.pantomime, versionCode 1/versionName 1.0, minSdk 23/targetSdk 35. No owner-key signed production artifact was created; the previously signed APK remains untouched.
+
 First open AGENTS.md, mobile/AGENTS.md, this status and **only the relevant topic doc**. Explain that docs are a snapshot: inspect touched source before modifying and update status only with confirmed new outcomes.

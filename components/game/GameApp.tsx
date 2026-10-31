@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Mascot } from "@/components/game/Mascot";
 import { TimerRing } from "@/components/game/TimerRing";
+import { GameAudio, type MusicTrack, type GameSound } from "@/components/game/GameAudio";
+import { TeamAvatar, TEAM_AVATARS, TEAM_COLORS, COLOR_VALUES, COLOR_NAMES } from "@/components/game/TeamAvatar";
 import { apiGet, apiPost, enqueueAndFlush, flushOutbox } from "@/lib/game/client-sync";
 import { loadCatalogPack, pickCatalogWords, refreshOnlinePack } from "@/lib/game/catalog-client";
 import type { CatalogPackDTO, CategoryDTO, GameChoiceDTO, GameDTO, RoundSummary, RuntimeMode, TeamDTO, WordDTO } from "@/types/game";
@@ -23,11 +25,12 @@ type Screen =
   | "WINNER";
 
 type ThemePreference = "light" | "dark" | "system";
-type ModalKind = "rules" | "settings" | "score" | "new-game" | null;
+type ModalKind = "rules" | "settings" | "score" | "new-game" | "team-style" | null;
 type PlayFeedback = "success" | "failure" | null;
 
 type GameConfig = {
   teamNames: string[];
+  teamStyles?: { colorKey: string; avatarId: string }[];
   roundCount: number;
   roundDuration: number;
   categoryIds: number[];
@@ -64,17 +67,12 @@ const CATEGORY_PREF_KEY = "pantomin-category-preferences-v1";
 const RANDOM_CATEGORY_KEY = "pantomin-random-category-v1";
 const CONTINUOUS_MODE_KEY = "pantomin-continuous-mode-v1";
 const RUNTIME_MODE_KEY = "pantomin-runtime-mode-v1";
-const TEAM_COLORS = ["violet", "cyan", "orange", "green", "rose", "blue", "amber", "mint"];
-const COLOR_VALUES: Record<string, string> = {
-  violet: "#8268f3",
-  cyan: "#36aeca",
-  orange: "#e98b43",
-  green: "#4eae77",
-  rose: "#dd6f8e",
-  blue: "#568ae5",
-  amber: "#d4a13c",
-  mint: "#50ae9b"
-};
+const MUSIC_KEY = "pantomin-music-v1";
+const AUDIO_LEVELS_KEY = "pantomin-audio-levels-v1";
+const teamStyle = (config: GameConfig, index: number) => ({
+  colorKey: TEAM_COLORS.includes(config.teamStyles?.[index]?.colorKey ?? "") ? config.teamStyles![index].colorKey : TEAM_COLORS[index % TEAM_COLORS.length],
+  avatarId: TEAM_AVATARS.some(([id]) => id === config.teamStyles?.[index]?.avatarId) ? config.teamStyles![index].avatarId : TEAM_AVATARS[index % TEAM_AVATARS.length][0]
+});
 
 const initialConfig: GameConfig = {
   teamNames: ["تیم آبی", "تیم نارنجی"],
@@ -165,6 +163,10 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
   const [modal, setModal] = useState<ModalKind>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [musicTrack, setMusicTrack] = useState<MusicTrack>("neon");
+  const [effectsVolume, setEffectsVolume] = useState(1);
+  const [musicVolume, setMusicVolume] = useState(.55);
+  const [editingTeam, setEditingTeam] = useState<number | null>(null);
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [hasResume, setHasResume] = useState(false);
   const [preferencesReady, setPreferencesReady] = useState(false);
@@ -184,7 +186,7 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
   const roundEndingRef = useRef(false);
   const actionLockRef = useRef(false);
   const flowLockRef = useRef(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const gameAudioRef = useRef<GameAudio | null>(null);
   const roundDragStartRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const roundStatsRef = useRef<RoundSummary>(emptyStats);
@@ -203,54 +205,45 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
     window.setTimeout(() => setToast((current) => current === message ? null : current), 2600);
   }, []);
 
-  const playTone = useCallback((kind: "start" | "correct" | "end" | "win" | "tick") => {
-    if (!soundEnabled || typeof window === "undefined") return;
-    try {
-      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = audioContextRef.current ?? new AudioCtx();
-      audioContextRef.current = ctx;
-      void ctx.resume();
-      const now = ctx.currentTime;
+  const getAudio = useCallback(() => gameAudioRef.current ??= new GameAudio(), []);
+  const playTone = useCallback((kind: GameSound) => {
+    const audio = getAudio();
+    audio.configure(soundEnabled, effectsVolume, musicVolume);
+    void audio.play(kind);
+  }, [getAudio, soundEnabled, effectsVolume, musicVolume]);
 
-      const note = (frequency: number, at: number, duration: number, volume = 0.075, type: OscillatorType = "sine") => {
-        const oscillator = ctx.createOscillator();
-        const gain = ctx.createGain();
-        oscillator.type = type;
-        oscillator.frequency.setValueAtTime(frequency, at);
-        gain.gain.setValueAtTime(0.0001, at);
-        gain.gain.exponentialRampToValueAtTime(volume, at + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
-        oscillator.connect(gain).connect(ctx.destination);
-        oscillator.start(at);
-        oscillator.stop(at + duration + 0.015);
-      };
+  useEffect(() => {
+    const unlock = () => getAudio().unlock();
+    document.addEventListener("pointerdown", unlock, { passive: true });
+    document.addEventListener("keydown", unlock);
+    return () => {
+      document.removeEventListener("pointerdown", unlock);
+      document.removeEventListener("keydown", unlock);
+      gameAudioRef.current?.dispose();
+      gameAudioRef.current = null;
+    };
+  }, [getAudio]);
 
-      if (kind === "tick") {
-        note(1080, now, 0.035, 0.035, "triangle");
-        note(760, now + 0.055, 0.028, 0.024, "triangle");
-        return;
-      }
-      if (kind === "end") {
-        note(520, now, 0.11, 0.065);
-        note(660, now + 0.09, 0.12, 0.06);
-        note(440, now + 0.2, 0.16, 0.055);
-        return;
-      }
-      if (kind === "correct") {
-        note(690, now, 0.07, 0.08);
-        note(840, now + 0.065, 0.1, 0.07);
-        return;
-      }
-      if (kind === "win") {
-        note(660, now, 0.12, 0.07);
-        note(820, now + 0.09, 0.14, 0.075);
-        note(990, now + 0.19, 0.18, 0.07);
-        return;
-      }
-      note(420, now, 0.08, 0.065);
-    } catch { /* optional enhancement */ }
-  }, [soundEnabled]);
+  useEffect(() => {
+    const audio = getAudio();
+    const sync = () => {
+      audio.configure(soundEnabled, effectsVolume, musicVolume);
+      if (document.hidden) { audio.suspend(); return; }
+      if (screen === "PLAYING" && timerEndAt && Date.now() < timerEndAt && !playFeedback) void audio.startMusic(musicTrack);
+      else audio.stopMusic();
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, [getAudio, soundEnabled, effectsVolume, musicVolume, musicTrack, screen, timerEndAt, playFeedback]);
+
+  useEffect(() => { getAudio().setUrgent(remaining <= 10); }, [getAudio, remaining]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+    localStorage.setItem(MUSIC_KEY, musicTrack);
+    localStorage.setItem(AUDIO_LEVELS_KEY, JSON.stringify({ effectsVolume, musicVolume }));
+  }, [preferencesReady, musicTrack, effectsVolume, musicVolume]);
 
   const vibrate = useCallback((pattern: number | number[]) => {
     if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate(pattern);
@@ -293,6 +286,13 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
   useEffect(() => {
     setHasResume(Boolean(localStorage.getItem(SNAPSHOT_KEY) || localStorage.getItem(SETUP_KEY)));
     setSoundEnabled(localStorage.getItem(SOUND_KEY) !== "off");
+    const storedMusic = localStorage.getItem(MUSIC_KEY);
+    setMusicTrack(storedMusic === "playful" || storedMusic === "off" ? storedMusic : "neon");
+    try {
+      const levels = JSON.parse(localStorage.getItem(AUDIO_LEVELS_KEY) || "null");
+      if (typeof levels?.effectsVolume === "number") setEffectsVolume(Math.max(0, Math.min(1, levels.effectsVolume)));
+      if (typeof levels?.musicVolume === "number") setMusicVolume(Math.max(0, Math.min(1, levels.musicVolume)));
+    } catch { /* Use balanced defaults for old installations. */ }
     const storedTheme = localStorage.getItem(THEME_KEY) as ThemePreference | null;
     setTheme(storedTheme === "light" || storedTheme === "dark" || storedTheme === "system" ? storedTheme : "system");
     setRandomCategoryEnabled(localStorage.getItem(RANDOM_CATEGORY_KEY) === "on");
@@ -643,7 +643,7 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
       await loadCategories(runtimeMode);
       const created = runtimeMode === "local"
         ? (() => {
-            const teams = config.teamNames.map((name, index) => ({ id: `local-team-${crypto.randomUUID()}`, name: name.trim(), colorKey: TEAM_COLORS[index], score: 0, position: index, forfeited: false }));
+            const teams = config.teamNames.map((name, index) => ({ id: `local-team-${crypto.randomUUID()}`, name: name.trim(), ...teamStyle(config, index), score: 0, position: index, forfeited: false }));
             return { id: `local-game-${crypto.randomUUID()}`, roundCount: config.roundCount, roundDuration: config.roundDuration, currentRound: 1, currentTeamId: teams[0].id, playMode: continuousModeEnabled ? "CONTINUOUS" as const : "SINGLE" as const, status: "ACTIVE" as const, teams };
           })()
         : await apiPost<GameDTO>("/api/games", {
@@ -651,13 +651,13 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
             roundDuration: config.roundDuration,
             categoryIds: config.categoryIds,
             playMode: continuousModeEnabled ? "CONTINUOUS" : "SINGLE",
-            teams: config.teamNames.map((name, index) => ({ name: name.trim(), colorKey: TEAM_COLORS[index] }))
+            teams: config.teamNames.map((name, index) => ({ name: name.trim(), colorKey: teamStyle(config, index).colorKey }))
           });
       setGameRuntimeMode(runtimeMode);
       localStorage.removeItem(SETUP_KEY);
       setSuspendedScreen(null);
       setPausedRemainingMs(null);
-      setGame(created);
+      setGame({ ...created, teams: created.teams.map((item, index) => ({ ...item, avatarId: teamStyle(config, index).avatarId })) });
       setUsedWordIds([]);
       setActiveCategoryIds([...config.categoryIds]);
       setUsedChoices([]);
@@ -988,10 +988,15 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
               <div className="count-display"><strong className="number">{config.teamNames.length}</strong><span>تیم</span></div>
               <button className="count-btn" onClick={() => updateTeamCount(-1)} disabled={config.teamNames.length <= 2} aria-label="کم کردن تیم">−</button>
             </div>
-            <div className="team-inputs">{config.teamNames.map((name, index) => <label className="team-input" key={index}>
-              <i className="team-color" style={{ background: COLOR_VALUES[TEAM_COLORS[index]] }} />
-              <input value={name} maxLength={50} aria-label={`نام تیم ${index + 1}`} onChange={(event) => setConfig((current) => ({ ...current, teamNames: current.teamNames.map((item, itemIndex) => itemIndex === index ? event.target.value : item) }))} />
-            </label>)}</div>
+            <div className="team-inputs">{config.teamNames.map((name, index) => {
+              const style = teamStyle(config, index);
+              return <div className="team-input" key={index}>
+                <button className="team-style-trigger" aria-label={`ظاهر تیم ${index + 1}`} onClick={() => { setEditingTeam(index); setModal("team-style"); }}><TeamAvatar {...style} size={48} /><span>ویرایش</span></button>
+                <input value={name} maxLength={50} aria-label={`نام تیم ${index + 1}`} onChange={(event) => setConfig((current) => ({ ...current, teamNames: current.teamNames.map((item, itemIndex) => itemIndex === index ? event.target.value : item) }))} />
+                <button className="team-color-trigger" style={{ background: COLOR_VALUES[style.colorKey] }} aria-label={`رنگ تیم ${index + 1}`} onClick={() => { setEditingTeam(index); setModal("team-style"); }} />
+              </div>;
+            })}</div>
+            <p className="team-style-hint">روی آواتار یا رنگ بزن و تیم خودت رو بساز.</p>
           </>}
 
           {setupStep === 1 && <>
@@ -1067,7 +1072,7 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
     {header(`دور ${game.currentRound} از ${game.roundCount}`)}
     <div className="turn-center ready-center">
       <div className="turn-team-pill"><i style={{ background: COLOR_VALUES[team.colorKey] }} /> نوبت این تیمه</div>
-      <Mascot mood="ready" size="lg" />
+      <TeamAvatar avatarId={team.avatarId ?? TEAM_AVATARS[team.position % 8][0]} colorKey={team.colorKey} size={132} />
       <h1 className="ready-title"><span>گوشی رو بده به</span><strong>{team.name}</strong></h1>
       <p className="copy turn-copy hint-copy">فقط بازیگر صفحه بعد رو ببینه؛ آماده شدی، بزن بریم.</p>
     </div>
@@ -1151,7 +1156,7 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
   const renderPlaying = () => game && team ? <div className={`screen playing-screen ${playFeedback ? `play-feedback-${playFeedback}` : ""}`} key="PLAYING">
     <div className="play-feedback-layer" aria-hidden="true" />
     <div className="play-home-row"><button className="icon-btn" onClick={goHome} disabled={Boolean(playFeedback)} aria-label="خانه و ذخیره بازی">{icon("home")}</button><span className="faint">خروج به خانه، با حفظ نوبت</span></div>
-    <div className="playing-head"><div className="round-pill">دور <b className="number">{game.currentRound}/{game.roundCount}</b></div><button className="score-pill score-pill-button" onClick={() => setModal("score")} aria-label="دیدن امتیازهای فعلی"><i className="score-dot" style={{ background: COLOR_VALUES[team.colorKey] }} />{team.name} <b className="number">{team.score}</b>{icon("score")}</button></div>
+    <div className="playing-head"><div className="round-pill">دور <b className="number">{game.currentRound}/{game.roundCount}</b></div><button className="score-pill score-pill-button" onClick={() => setModal("score")} aria-label="دیدن امتیازهای فعلی"><TeamAvatar avatarId={team.avatarId ?? TEAM_AVATARS[team.position % 8][0]} colorKey={team.colorKey} size={28} />{team.name} <b className="number">{team.score}</b>{icon("score")}</button></div>
     <div className="playing-main">
       <TimerRing remaining={remaining} total={game.roundDuration} />
       {currentWord ? <><div className="word-title">{currentWord.title}</div><div className="playing-category">{currentWord.categoryName} · {selectedPoints} امتیاز{game.playMode === "SINGLE" && selectedPoints !== 30 ? " + سرعت" : ""}</div><Mascot mood={remaining <= 10 ? "tense" : "look-up"} size="sm" /></> : <><Mascot mood="thinking" /><p className="copy hint-copy">کلمه بعدی داره آماده می‌شه…</p></>}
@@ -1187,7 +1192,7 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
     {header("جدول امتیازها")}
     <div className="scoreboard-head"><div><div className="eyebrow">وضعیت بازی</div><h1 className="title-lg">فعلاً کی جلوئه؟</h1><p className="copy hint-copy">رتبه‌ها بعد از هر نوبت به‌روز می‌شن.</p></div><div className="scoreboard-round"><span>دور</span><strong className="number">{game.currentRound}/{game.roundCount}</strong></div></div>
     <div className="scoreboard-summary"><span><b className="number">{leaderboard.filter(item => !item.forfeited).length}</b> تیم فعال</span><span>بیشترین امتیاز: <b className="number">{leaderboard[0]?.score ?? 0}</b></span></div>
-    <div className="scoreboard">{leaderboard.map((item, index) => <div className={`score-row ${index === 0 && !item.forfeited ? "leader" : ""} ${item.forfeited ? "forfeited" : ""}`} key={item.id}><span className={`rank rank-${Math.min(index + 1, 3)}`}>{index + 1}</span><div className="score-team"><strong><i className="score-dot" style={{ background: COLOR_VALUES[item.colorKey] }} />{item.name}</strong><small>{item.forfeited ? "از بازی خارج شده" : index === 0 ? "فعلاً صدرنشین" : `تیم شماره ${item.position + 1}`}</small></div><span className="score-value"><b className="number">{item.score}</b><small>امتیاز</small></span></div>)}</div>
+    <div className="scoreboard">{leaderboard.map((item, index) => <div className={`score-row ${index === 0 && !item.forfeited ? "leader" : ""} ${item.forfeited ? "forfeited" : ""}`} key={item.id}><span className={`rank rank-${Math.min(index + 1, 3)}`}>{index + 1}</span><div className="score-team"><strong><TeamAvatar avatarId={item.avatarId ?? TEAM_AVATARS[item.position % 8][0]} colorKey={item.colorKey} size={32} />{item.name}</strong><small>{item.forfeited ? "از بازی خارج شده" : index === 0 ? "فعلاً صدرنشین" : `تیم شماره ${item.position + 1}`}</small></div><span className="score-value"><b className="number">{item.score}</b><small>امتیاز</small></span></div>)}</div>
     <div className="turn-footer"><Button onClick={continueAfterScoreboard}>{game.status === "FINISHED" ? "اعلام برنده" : game.currentTeamId ? `نوبت ${currentTeam(game)?.name ?? "تیم بعد"}` : "ادامه"}</Button></div>
   </div> : null;
 
@@ -1197,7 +1202,7 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
     return <div className="screen" key="WINNER">
       {header("برنده بازی")}
       <div className="confetti" aria-hidden="true">{Array.from({ length: 18 }).map((_, index) => <i key={index} style={{ left: `${5 + (index * 89) % 92}%`, animationDelay: `${(index % 6) * .08}s`, "--x": `${(index % 2 ? 1 : -1) * (20 + index * 3)}px` } as CSSProperties} />)}</div>
-      <div className="turn-center"><Mascot mood="celebrate" size="lg" /><div className="winner-trophy">🏆</div><div className="eyebrow">برنده بازی</div><h1 className="title-xl">{winner.name}</h1><p className="copy">با <strong className="number">{winner.score}</strong> امتیاز بازی رو برد!</p><div className="scoreboard" style={{ width: "100%" }}>{leaderboard.filter((item) => !item.forfeited).slice(0,3).map((item,index)=><div className={`score-row ${index===0?"leader":""}`} key={item.id}><span className="rank">{index+1}</span><div className="score-team"><strong>{item.name}</strong></div><span className="score-value">{item.score}</span></div>)}</div></div>
+      <div className="turn-center"><TeamAvatar avatarId={winner.avatarId ?? TEAM_AVATARS[winner.position % 8][0]} colorKey={winner.colorKey} size={132} /><div className="winner-trophy">🏆</div><div className="eyebrow">برنده بازی</div><h1 className="title-xl">{winner.name}</h1><p className="copy">با <strong className="number">{winner.score}</strong> امتیاز بازی رو برد!</p><div className="scoreboard" style={{ width: "100%" }}>{leaderboard.filter((item) => !item.forfeited).slice(0,3).map((item,index)=><div className={`score-row ${index===0?"leader":""}`} key={item.id}><span className="rank">{index+1}</span><div className="score-team"><strong><TeamAvatar avatarId={item.avatarId ?? TEAM_AVATARS[item.position % 8][0]} colorKey={item.colorKey} size={32} />{item.name}</strong></div><span className="score-value">{item.score}</span></div>)}</div></div>
       <div className="home-actions screen-footer"><Button onClick={() => { void createGame(); }} disabled={busy}>{busy ? "داریم می‌چینیم…" : "دوباره با همین تیم‌ها"}</Button><Button tone="secondary" onClick={resetForNewGame}>بازی جدید</Button><Button tone="ghost" onClick={goHome}>برگشت به خانه</Button></div>
     </div>;
   };
@@ -1231,6 +1236,12 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
       <div className="settings-section-label">ظاهر</div>
       <div className="theme-options">{(["light","dark","system"] as ThemePreference[]).map((value) => <button key={value} className={`theme-option ${theme === value ? "selected" : ""}`} onClick={() => setTheme(value)}>{value === "light" ? "روشن" : value === "dark" ? "تیره" : "سیستم"}</button>)}</div>
       <div className="setting-row"><span>{icon("sound")} صداهای بازی</span><button role="switch" aria-checked={soundEnabled} className={`switch ${soundEnabled ? "on" : ""}`} onClick={() => setSoundEnabled((enabled) => !enabled)} aria-label="تغییر وضعیت صدا"><i /></button></div>
+      <div className="settings-section-label">موسیقی زمان اجرا</div>
+      <div className="music-options">{(["neon", "playful", "off"] as MusicTrack[]).map(value => <button key={value} aria-pressed={musicTrack === value} className={`music-option ${musicTrack === value ? "selected" : ""}`} onClick={() => setMusicTrack(value)}><strong>{value === "neon" ? "نئون بونس" : value === "playful" ? "تعقیب بامزه" : "بدون موسیقی"}</strong><small>{value === "neon" ? "الکترو فانک · پرانرژی" : value === "playful" ? "ماریمبا · بازیگوش" : "فقط افکت‌های بازی"}</small></button>)}</div>
+      <label className="audio-level">بلندی افکت‌ها <b>{Math.round(effectsVolume * 100)}٪</b><input type="range" min="0" max="100" value={Math.round(effectsVolume * 100)} aria-label="بلندی افکت‌ها" onChange={event => setEffectsVolume(Number(event.target.value) / 100)} /></label>
+      <label className="audio-level">بلندی موسیقی <b>{Math.round(musicVolume * 100)}٪</b><input type="range" min="0" max="100" value={Math.round(musicVolume * 100)} aria-label="بلندی موسیقی" onChange={event => setMusicVolume(Number(event.target.value) / 100)} /></label>
+      <button className="text-btn" disabled={!soundEnabled} onClick={() => playTone("start")}>آزمایش صدای شروع</button>
+      <p className="team-style-hint">موسیقی فقط هنگام اجرا پخش می‌شه؛ در ۱۰ ثانیه آخر کم می‌شه تا تیک‌تاک واضح باشه.</p>
       <div className="setting-row"><span className="setting-copy"><strong>موضوع تصادفی هر نوبت</strong><small>به‌جای انتخاب موضوع، بازی خودش یکی رو نشون می‌ده.</small></span><button role="switch" aria-checked={randomCategoryEnabled} className={`switch ${randomCategoryEnabled ? "on" : ""}`} onClick={() => setRandomCategoryEnabled((enabled) => !enabled)} aria-label="موضوع تصادفی"><i /></button></div>
       <div className="setting-row"><span className="setting-copy"><strong>حالت چندکلمه‌ای</strong><small>{game ? "برای بازی بعدی؛ " : ""}تا پایان زمان چند کلمه پشت‌سرهم بازی کن.</small></span><button role="switch" aria-checked={continuousModeEnabled} className={`switch ${continuousModeEnabled ? "on" : ""}`} onClick={() => setContinuousModeEnabled((enabled) => !enabled)} aria-label="حالت چندکلمه‌ای"><i /></button></div>
       <div className="settings-category-head"><div><div className="settings-section-label">دسته‌های بازی</div><small>{game ? "برای بازی بعدی" : "برای بازی جدید"}</small></div><button className="text-btn" onClick={() => setConfig((current) => ({ ...current, categoryIds: categories.map((item) => item.id) }))} disabled={!categories.length || config.categoryIds.length === categories.length}>{config.categoryIds.length === categories.length && categories.length ? "همه انتخابن" : "انتخاب همه"}</button></div>
@@ -1244,8 +1255,15 @@ export function GameApp({ renderPersonalLibrary }: { renderPersonalLibrary?: (on
       {!categoriesLoading && !config.categoryIds.length && <p className="settings-warning">حداقل یک دسته برای بازی جدید انتخاب کن.</p>}
     </Modal>}
 
-    {modal === "score" && game && <Modal title="امتیازها الان" onClose={() => setModal(null)}><div className="scoreboard score-peek-board">{leaderboard.map((item, index) => <div className={`score-row ${index === 0 && !item.forfeited ? "leader" : ""} ${item.forfeited ? "forfeited" : ""}`} key={item.id}><span className="rank">{index + 1}</span><div className="score-team"><strong><i className="score-dot" style={{ background: COLOR_VALUES[item.colorKey] }} />{item.name}</strong><small>{item.forfeited ? "از بازی خارج شده" : item.id === game.currentTeamId ? "نوبت فعلی" : index === 0 ? "فعلاً جلوئه" : ""}</small></div><span className="score-value">{item.score}</span></div>)}</div></Modal>}
+    {modal === "score" && game && <Modal title="امتیازها الان" onClose={() => setModal(null)}><div className="scoreboard score-peek-board">{leaderboard.map((item, index) => <div className={`score-row ${index === 0 && !item.forfeited ? "leader" : ""} ${item.forfeited ? "forfeited" : ""}`} key={item.id}><span className="rank">{index + 1}</span><div className="score-team"><strong><TeamAvatar avatarId={item.avatarId ?? TEAM_AVATARS[item.position % 8][0]} colorKey={item.colorKey} size={32} />{item.name}</strong><small>{item.forfeited ? "از بازی خارج شده" : item.id === game.currentTeamId ? "نوبت فعلی" : index === 0 ? "فعلاً جلوئه" : ""}</small></div><span className="score-value">{item.score}</span></div>)}</div></Modal>}
 
+    {modal === "team-style" && editingTeam !== null && <Modal title={`ظاهر ${config.teamNames[editingTeam]}`} onClose={() => setModal(null)}>
+      <div className="team-style-preview"><TeamAvatar {...teamStyle(config, editingTeam)} size={112} /><strong>{config.teamNames[editingTeam]}</strong></div>
+      <div className="settings-section-label">آواتار اختصاصی</div>
+      <div className="avatar-options">{TEAM_AVATARS.map(([id, name]) => <button key={id} aria-label={name} aria-pressed={teamStyle(config, editingTeam).avatarId === id} className={teamStyle(config, editingTeam).avatarId === id ? "selected" : ""} onClick={() => setConfig(current => ({ ...current, teamStyles: current.teamNames.map((_, index) => ({ ...teamStyle(current, index), ...(index === editingTeam ? { avatarId: id } : {}) })) }))}><TeamAvatar avatarId={id} colorKey={teamStyle(config, editingTeam).colorKey} size={58} /><span>{name}</span></button>)}</div>
+      <div className="settings-section-label">رنگ تیم</div>
+      <div className="team-color-options">{TEAM_COLORS.map((color, colorIndex) => <button key={color} aria-label={COLOR_NAMES[colorIndex]} aria-pressed={teamStyle(config, editingTeam).colorKey === color} style={{ background: COLOR_VALUES[color] }} onClick={() => setConfig(current => ({ ...current, teamStyles: current.teamNames.map((_, index) => ({ ...teamStyle(current, index), ...(index === editingTeam ? { colorKey: color } : {}) })) }))}>{teamStyle(config, editingTeam).colorKey === color ? "✓" : ""}</button>)}</div>
+    </Modal>}
     {modal === "new-game" && <Modal title="بازی جدید شروع کنیم؟" onClose={() => setModal(null)}><p>بازی ذخیره‌شده با بازی جدید جایگزین می‌شه.</p><Button onClick={resetForNewGame}>بله، بازی جدید</Button></Modal>}
     {toast && <div className="toast" role="status">{toast}</div>}
   </AppShell>;

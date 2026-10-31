@@ -91,6 +91,7 @@ Potential touchpoints if changing scores: registerAnswer, registerFault, changeW
 - startTimer creates timerEndAt = Date.now() + roundDuration * 1000; setInterval runs ~120ms but elapsed time uses wall clock.
 - Displayed remaining time is ceil((timerEndAt - Date.now()) / 1000), bounded at 0.
 - Last 10 seconds trigger tick feedback if tick value changed.
+- Audio update (2026-10-31): shared `GameAudio.ts` preloads packaged AAC cues and two original music loops after a user gesture. Start rings immediately, timeout plays the user's full 3.04-second clip, last-ten-second cues duck the music. Music stops on turn completion, explicit Home and app background; restored/paused turns keep existing deadline semantics. Master mute and separate effects/music levels are saved locally.
 - Expiry triggers feedback state then delayed finish (~620ms). Correct SINGLE also uses a resolution delay. Rapid taps are gated by locks.
 - Snapshot stores timerEndAt and relevant turn state. App background/resume requires validation: don't assume a foreground interval reliably runs in background.
 - For changes to pause/resume, inspect both screen transition and persisted snapshot. Test app termination, background expiration, unmounts and duplicate effects.
@@ -114,6 +115,8 @@ Potential touchpoints if changing scores: registerAnswer, registerFault, changeW
 The Android app stores data inside private WebView storage. Deleting the app or Clear Storage deletes it; **do not claim sync across phones**.
 
 PersistedSnapshot.version = 1; if fields change, plan migration/fallback instead of indiscriminate removal. Reset/resume may be impacted by changing available categories/word IDs. Test upgrades with an active saved game.
+
+Optional fields added 2026-10-31: `config.teamStyles` and `TeamDTO.avatarId`. Missing values fall back by team position, preserving old saves. Setup offers eight original SVG mascots and eight named colors. New preferences: `pantomin-music-v1` (`neon`/`playful`/`off`) and `pantomin-audio-levels-v1` (effects/music volumes 0..1). Existing sound mute key remains authoritative. Assets and shared audio/avatar components are copied by `mobile/scripts/prepare.mjs`.
 
 Optional snapshot fields added 2026-10-16: `pausedRemainingMs` and `resolutionReason` (`correct` / `timeout`). Missing fields use the original deadline and legacy completion fallback. Word visibility is deliberately not persisted. SETUP resume preserves current topic preferences, so settings changed on HOME are not overwritten by an old draft.
 
