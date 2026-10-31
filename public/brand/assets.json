@@ -1,0 +1,13 @@
+{
+  "name": "ادازی",
+  "background": "#f2eeff",
+  "sourceSha256": {
+    "mascot": "bd1513467f64b9c8d09bca5edae8b3be02ba783415e084b4e416cc6f23f63e4d",
+    "lockup": "bf7922b41480751fbc017ad8ba49cdacf1af7d59761c325bbb896535dc363588"
+  },
+  "sources": {
+    "mascot": "branding/source/adazi-mascot.png",
+    "lockup": "branding/source/adazi-lockup.png"
+  },
+  "note": "Original user-supplied artwork, preserved without cropping or redrawing."
+}

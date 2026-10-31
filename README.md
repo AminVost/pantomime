@@ -1,4 +1,4 @@
-# Pantomime — Persian Pantomime Game
+# Adazi — Persian Charades Game
 
 A complete, production-ready Persian charades web app focused on mobile devices, RTL support, fast gameplay, and an app-like user experience.
 

@@ -1,0 +1,39 @@
+{
+  "name": "adazi-android-offline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "brand:assets": "node scripts/generate-brand.mjs",
+    "prepare:assets": "node scripts/prepare.mjs",
+    "dev": "npm run prepare:assets && vite",
+    "build": "npm run prepare:assets && tsc --noEmit && vite build",
+    "test": "npm run prepare:assets && node --test tests/*.test.mjs",
+    "android:init": "npm run build && npx cap add android && npm run android:configure",
+    "android:configure": "npx cap sync android && node scripts/configure-android.mjs",
+    "android:sync": "npm run build && npm run android:configure",
+    "android:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:release": "npm run android:sync && cd android && ./gradlew assembleRelease bundleRelease",
+    "android:open": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@fontsource-variable/vazirmatn": "^5.0.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.0",
+    "sharp": "0.35.5",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^7.0.0"
+  }
+}
